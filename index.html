@@ -450,7 +450,7 @@ let customPosterData = DEFAULT_POSTER;
 
 function getColorForRating(rating){
   if(rating === null || rating === undefined || rating === '' || isNaN(rating)) return null;
-  const val = parseFloat(rating);
+const val = Math.round(parseFloat(rating) * 10) / 10;
   if(val >= 9.0) return '#188a53';
   if(val >= 8.0) return '#31b96e';
   if(val >= 7.0) return '#f3ca4d';
