@@ -917,6 +917,12 @@ function neutralizeAnimations(clonedDoc, rootId){
     el.style.opacity = '1';
     el.style.transform = 'none';
   });
+  // os tooltips (ex: "107 avaliações") só devem aparecer no hover -- o passo acima
+  // acaba de forçar eles a ficarem visiveis por engano, entao escondemos de novo aqui
+  root.querySelectorAll('.tooltip').forEach(el => {
+    el.style.opacity = '0';
+    el.style.display = 'none';
+  });
 }
 
 /* aguarda todas as imagens dentro do elemento estarem carregadas antes de capturar */
