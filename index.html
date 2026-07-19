@@ -1532,6 +1532,28 @@ function neutralizeAnimations(clonedDoc, rootId){
     el.style.opacity = '0';
     el.style.display = 'none';
   });
+
+  // as celulas do "Monte o Seu" sao <input type="number"> editaveis: o html2canvas
+  // captura o valor bruto (sem casa decimal fixa) e alinha o texto de forma
+  // inconsistente. Pra imagem baixada ficar igual as demais (nota com 1 casa
+  // decimal, centralizada), trocamos cada input por um texto estatico formatado.
+  root.querySelectorAll('.cell-input input').forEach(input => {
+    const raw = input.value;
+    const num = parseFloat(raw);
+    const formatted = raw === '' || isNaN(num) ? '–' : num.toFixed(1);
+    const span = clonedDoc.createElement('div');
+    span.textContent = formatted;
+    span.style.width = '100%';
+    span.style.height = '100%';
+    span.style.display = 'flex';
+    span.style.alignItems = 'center';
+    span.style.justifyContent = 'center';
+    span.style.fontWeight = '800';
+    span.style.fontSize = '13px';
+    span.style.fontFamily = "'Inter', sans-serif";
+    span.style.color = (raw === '' || isNaN(num)) ? 'var(--text-muted)' : 'inherit';
+    input.replaceWith(span);
+  });
 }
 
 /* aguarda todas as imagens dentro do elemento estarem carregadas antes de capturar */
