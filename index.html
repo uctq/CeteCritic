@@ -451,7 +451,7 @@ body{
 
 <div class="topbar">
   <div class="topbar-actions">
-    <button class="btn btn-solid" id="openReviewModal">Avaliar episódios</button>
+    <button class="btn btn-solid" id="openReviewModal" disabled title="Verificando horário no servidor...">Avaliar episódios</button>
     <button class="btn btn-ghost" id="downloadBtn">Baixar imagem</button>
   </div>
 </div>
@@ -782,6 +782,24 @@ const SEASONS = 5;
 const EPISODES = 3;
 const DISPLAY_CONTAINERS = ['grid-container', 'gerais-grid-container'];
 
+/* ano da edição atual: gravado em cada voto e usado para filtrar o que aparece no site */
+const EDITION_YEAR = 2026;
+
+/* ===================== HORARIO OFICIAL (servidor) =====================
+   O relógio do visitante pode estar errado (ou ser alterado de propósito).
+   Por isso o site só libera a votação DEPOIS de receber o horário do
+   servidor (vem junto na resposta do fetchSubmissions). Enquanto isso,
+   o botão "Avaliar episódios" fica travado. */
+let serverTimeOffset = null;      // null = ainda não sincronizou
+let serverSaysClosed = false;     // o próprio servidor informa se a votação acabou
+
+function isTimeSynced(){ return serverTimeOffset !== null; }
+function now(){
+  return serverTimeOffset === null
+    ? new Date()                                  // fallback (só usado em countdowns)
+    : new Date(Date.now() + serverTimeOffset);    // horário corrigido pelo servidor
+}
+
 /* ===================== LIBERACAO POR DATA ===================== */
 // horarios no fuso de Brasilia (-03:00), fixo, independente do fuso do visitante
 const SEASON_UNLOCK = {
@@ -792,7 +810,7 @@ const FESTIVAL_END = new Date('2026-07-18T23:59:00-03:00');
 
 function isSeasonLocked(s){
   const unlock = SEASON_UNLOCK[s];
-  return unlock ? new Date() < unlock : false;
+  return unlock ? now() < unlock : false;
 }
 function formatUnlockDate(s){
   const unlock = SEASON_UNLOCK[s];
@@ -800,7 +818,12 @@ function formatUnlockDate(s){
   return unlock.toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
 }
 function isFestivalOver(){
-  return new Date() >= FESTIVAL_END;
+  return serverSaysClosed || now() >= FESTIVAL_END;
+}
+
+/* só pode votar se o horário já foi confirmado pelo servidor E o festival não acabou */
+function canVote(){
+  return isTimeSynced() && !isFestivalOver();
 }
 function seasonHeaderLabel(s){
   return isSeasonLocked(s) ? `S${s} <span class="lock-icon" title="Libera em ${formatUnlockDate(s)}">🔒</span>` : `S${s}`;
@@ -822,7 +845,7 @@ const SEASON_UNLOCK_2027 = {
 /* countdown do "Monte o Seu 2027" -- 1 de julho de 2027 */
 const CUSTOM_2027_UNLOCK = new Date('2027-07-01T00:00:00-03:00');
 
-function isSeasonLocked2027(s){ return new Date() < SEASON_UNLOCK_2027[s]; }
+function isSeasonLocked2027(s){ return now() < SEASON_UNLOCK_2027[s]; }
 function formatUnlockDate2027(s){
   return SEASON_UNLOCK_2027[s].toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
 }
@@ -880,10 +903,18 @@ function updateTopbarAndBanners(){
 }
 
 function applyFestivalEndState(){
-  if(isFestivalOver()){
-    const btn = document.getElementById('openReviewModal');
+  const btn = document.getElementById('openReviewModal');
+  if(!isTimeSynced()){
+    // ainda não conectou no servidor: mantém travado (estado inicial do HTML)
+    btn.disabled = true;
+    btn.title = 'Verificando horário no servidor...';
+  } else if(isFestivalOver()){
     btn.disabled = true;
     btn.title = 'As avaliações encerraram';
+    if(modalOverlay && modalOverlay.classList.contains('open')) closeModal();
+  } else {
+    btn.disabled = false;
+    btn.title = '';
   }
   updateTopbarAndBanners();
 }
@@ -891,22 +922,22 @@ function applyFestivalEndState(){
 /* atualiza os countdowns (fechamento das avaliacoes 2026, teaser 2027 e abertura da S1 2027) a cada segundo */
 setInterval(() => {
   const elClose = document.getElementById('countdownTimer');
-  if(elClose) elClose.textContent = formatDuration(FESTIVAL_END - new Date());
+  if(elClose) elClose.textContent = formatDuration(FESTIVAL_END - now());
   const elTeaser = document.getElementById('teaserCountdown');
-  if(elTeaser) elTeaser.textContent = formatDuration(NEXT_FESTIVAL - new Date());
+  if(elTeaser) elTeaser.textContent = formatDuration(NEXT_FESTIVAL - now());
   const el2027 = document.getElementById('countdown2027');
-  if(el2027) el2027.textContent = formatDuration(SEASON_UNLOCK_2027[1] - new Date());
+  if(el2027) el2027.textContent = formatDuration(SEASON_UNLOCK_2027[1] - now());
 
   const elCustom2027 = document.getElementById('countdown-custom-2027');
-  if(elCustom2027) elCustom2027.textContent = formatDuration(CUSTOM_2027_UNLOCK - new Date());
+  if(elCustom2027) elCustom2027.textContent = formatDuration(CUSTOM_2027_UNLOCK - now());
 
   const el2027Sobre = document.getElementById('countdown-sobre-2027');
-  if(el2027Sobre) el2027Sobre.textContent = formatDuration(SEASON_UNLOCK_2027[1] - new Date());
+  if(el2027Sobre) el2027Sobre.textContent = formatDuration(SEASON_UNLOCK_2027[1] - now());
   const el2027Abertura = document.getElementById('countdown-abertura-2027');
-  if(el2027Abertura) el2027Abertura.textContent = formatDuration(SEASON_UNLOCK_2027[1] - new Date());
+  if(el2027Abertura) el2027Abertura.textContent = formatDuration(SEASON_UNLOCK_2027[1] - now());
   for(let s = 1; s <= 5; s++){
     const el = document.getElementById(`countdown-noite-${s}-2027`);
-    if(el) el.textContent = formatDuration(SEASON_UNLOCK_2027[s] - new Date());
+    if(el) el.textContent = formatDuration(SEASON_UNLOCK_2027[s] - now());
   }
 }, 1000);
 
@@ -1254,6 +1285,7 @@ function formatCooldown(ms){
 
 const modalOverlay = document.getElementById('modalOverlay');
 function openModal(){
+  if(!canVote()) return; // trava extra: sem horário confirmado ou festival encerrado, não abre
   modalOverlay.classList.add('open');
   requestAnimationFrame(() => modalOverlay.classList.add('show'));
   updateFillHint();
@@ -1272,6 +1304,7 @@ modalOverlay.addEventListener('click', (e) => { if(e.target === modalOverlay) cl
 /* ===================== ENVIO (parcial permitido) ===================== */
 const reviewerNameEl = document.getElementById('reviewerName');
 document.getElementById('submitReview').addEventListener('click', async () => {
+  if(!canVote()) return; // sem horário do servidor confirmado (ou votação encerrada), não envia
   if(Object.keys(formValues).length < 1) return;
   if(cooldownRemainingMs() > 0) return; // trava extra alem do disabled do botao
 
@@ -1289,7 +1322,7 @@ document.getElementById('submitReview').addEventListener('click', async () => {
   ts: Date.now(),
   name,
   grid: {...formValues},
-  year: 2026 // ou a variável que representa a edição atual sendo avaliada
+  year: EDITION_YEAR // ano da edição atual (coluna E da planilha)
 };
   submissions.push(submission);
 
@@ -1630,12 +1663,26 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbx_HwHNycDjcKfSsYfVm6j1
 async function fetchSubmissions(){
   if(API_URL.startsWith('COLE_AQUI')){ submissions = []; return; }
   try{
-    const res = await fetch(API_URL);
-    submissions = await res.json();
+    // pede só as avaliações da edição atual (o Apps Script filtra pela coluna E)
+    const res = await fetch(API_URL + '?year=' + EDITION_YEAR);
+    const data = await res.json();
+
+    if(Array.isArray(data)){
+      // formato antigo do Apps Script (só a lista) -- ainda funciona,
+      // mas sem sincronizar o relógio; filtra o ano por garantia
+      submissions = data.filter(s => !s.year || Number(s.year) === EDITION_YEAR);
+    } else {
+      submissions = (data.submissions || []).filter(s => !s.year || Number(s.year) === EDITION_YEAR);
+      if(typeof data.serverNow === 'number'){
+        serverTimeOffset = data.serverNow - Date.now(); // sincroniza com o horário oficial
+      }
+      serverSaysClosed = !!data.votingClosed;
+    }
   }catch(e){
     console.error('Falha ao carregar avaliações', e);
     submissions = [];
   }
+  applyFestivalEndState(); // libera/trava o botão assim que souber o horário real
 }
 
 async function postSubmission(submission){
