@@ -1128,7 +1128,7 @@ function renderNoiteCards(night){
         </div>
         <div class="noite-card-synopsis">${escapeHtml(info.sinopse)}</div>
         ${info.youtube
-          ? `<iframe class="video-embed-placeholder" id="video-${key}" src="https://www.youtube.com/embed/${escapeHtml(info.youtube)}" title="${escapeHtml(info.titulo)}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>`
+          ? `<iframe class="video-embed-placeholder" id="video-${key}" src="https://www.youtube.com/embed/${escapeHtml(info.youtube)}${info.youtubeStart ? `?start=${info.youtubeStart}` : ''}" title="${escapeHtml(info.titulo)}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>`
           : `<div class="video-embed-placeholder" id="video-${key}">
           <div class="play-icon">▶</div>
           <div>Vídeo da apresentação em breve</div>
