@@ -92,6 +92,7 @@ body{
   gap: 8px; color: var(--text-muted); font-size: 12px;
 }
 .video-embed-placeholder .play-icon{ font-size: 26px; opacity:.5; }
+iframe.video-embed-placeholder{ border: none; }
 .noite-intro{ width:100%; max-width: 900px; margin-bottom: 6px; }
 .noite-intro h1{ font-family:'Bebas Neue', sans-serif; font-size: 28px; letter-spacing: .5px; color: var(--gold); margin-bottom:4px; }
 .noite-intro p{ font-size: 12px; color: var(--text-muted); margin-bottom: 20px; }
@@ -1078,9 +1079,9 @@ function keyValues(key){
 
 /* dados da planilha "tabela_apresentacoes.xlsx" -- turma, titulo e sinopse de cada peca */
 const PRESENTATIONS = {
-  s1e1: { titulo: 'É Vero, Verissimos!', turma: '01', sinopse: 'O que deveria ser apenas mais uma manhã monótona no CETEC se transforma em um pesadelo épico quando o tempo se rompe, transportando quatro alunos para dentro de uma das maiores obras da literatura brasileira: \'O Tempo e o Vento\'. A confusão cômica rapidamente se torna perigosa quando o som de galopes e tiros corta o ar. Presos no fogo cruzado entre Farrapos e a Tropa Imperial, eles descobrem que, no universo de Erico Verissimo, o passado é vivo, sangrento e implacável.' },
-  s1e2: { titulo: 'Calados pela Morte', turma: 'B2', sinopse: 'Sete mortos permanecem sem sepultamento devido a uma greve de coveiros em uma cidade marcada por crimes silenciosos. Ao despertar, percebem que não podem ser ouvidos por ninguém, exceto um detetive desprezado pela população. Enquanto buscam compreender as circunstâncias de suas mortes, descobrem que suas histórias estão interligadas. Inspirada em \'Incidente em Antares\', propõe uma reflexão sobre as vozes silenciadas.' },
-  s1e3: { titulo: 'O Clube dos Anjos - O que não engorda, mata', turma: 'B3', sinopse: 'Em um luxuoso clube da alta sociedade gaúcha, jantares periódicos reúnem nobres em torno de pratos refinados preparados por um chef francês. Entre uma taça de vinho e outra, mortes inexplicáveis acontecem e deixam o questionamento: quem realmente está no controle dessa história?' },
+  s1e1: { titulo: 'É Vero, Verissimos!', turma: '01', sinopse: 'O que deveria ser apenas mais uma manhã monótona no CETEC se transforma em um pesadelo épico quando o tempo se rompe, transportando quatro alunos para dentro de uma das maiores obras da literatura brasileira: \'O Tempo e o Vento\'. A confusão cômica rapidamente se torna perigosa quando o som de galopes e tiros corta o ar. Presos no fogo cruzado entre Farrapos e a Tropa Imperial, eles descobrem que, no universo de Erico Verissimo, o passado é vivo, sangrento e implacável.', youtube: 'cwk-zqIPCXw', youtubeStart: 3435 },
+  s1e2: { titulo: 'Calados pela Morte', turma: 'B2', sinopse: 'Sete mortos permanecem sem sepultamento devido a uma greve de coveiros em uma cidade marcada por crimes silenciosos. Ao despertar, percebem que não podem ser ouvidos por ninguém, exceto um detetive desprezado pela população. Enquanto buscam compreender as circunstâncias de suas mortes, descobrem que suas histórias estão interligadas. Inspirada em \'Incidente em Antares\', propõe uma reflexão sobre as vozes silenciadas.', youtube: 'cwk-zqIPCXw', youtubeStart: 5210  },
+  s1e3: { titulo: 'O Clube dos Anjos - O que não engorda, mata', turma: 'B3', sinopse: 'Em um luxuoso clube da alta sociedade gaúcha, jantares periódicos reúnem nobres em torno de pratos refinados preparados por um chef francês. Entre uma taça de vinho e outra, mortes inexplicáveis acontecem e deixam o questionamento: quem realmente está no controle dessa história?', youtube: 'cwk-zqIPCXw', youtubeStart: 8789  },
   s2e1: { titulo: 'O Livro Roubado', turma: 'S1', sinopse: 'Em meio a uma crise criativa em sua sala de estar, Luis Fernando Verissimo tenta dar vida a uma nova história, fazendo com que seus rascunhos se materializem no palco. Uma reflexão metalinguística sobre o processo criativo que celebra a genialidade de Luis Fernando e suas obras.' },
   s2e2: { titulo: 'Para Onde os Homens Saem à Noite?', turma: 'A2', sinopse: 'Carmen se vê diante de um inquietante quebra-cabeça envolvendo a fidelidade de Eduardo, seu esposo. Com o excêntrico detetive Ed. Mort. e seu companheiro Voltaire, mergulha em um submundo sofisticado de casas de massagem. Entre mulheres enigmáticas e pistas fragmentadas, a investigação revela algo muito maior e mais perigoso que a infidelidade.' },
   s2e3: { titulo: 'Katabasis: O Inferno Dos Verissimos', turma: 'A3', sinopse: 'Um homem fragmentado por memórias que insistem em voltar atravessa um percurso entre sonho e realidade, onde cada encontro parece mais uma lembrança distorcida do que um destino. Culpa, desejo e perda se misturam, enquanto a linha entre o real e o esquecido se torna cada vez mais frágil.' },
@@ -1126,10 +1127,12 @@ function renderNoiteCards(night){
           <div class="noite-card-rating">${ratingHtml}</div>
         </div>
         <div class="noite-card-synopsis">${escapeHtml(info.sinopse)}</div>
-        <div class="video-embed-placeholder" id="video-${key}">
+        ${info.youtube
+          ? `<iframe class="video-embed-placeholder" id="video-${key}" src="https://www.youtube.com/embed/${escapeHtml(info.youtube)}" title="${escapeHtml(info.titulo)}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>`
+          : `<div class="video-embed-placeholder" id="video-${key}">
           <div class="play-icon">▶</div>
           <div>Vídeo da apresentação em breve</div>
-        </div>
+        </div>`}
       </div>`;
   }
   container.innerHTML = html || '<div class="empty-note">Nenhuma apresentação cadastrada para esta noite.</div>';
