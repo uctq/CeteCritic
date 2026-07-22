@@ -896,7 +896,7 @@ function paginaMonte(){
   posterImg.addEventListener('load', () => posterBox.classList.add('has-image'));
   posterImg.src = salvo || posterPadrao;
 
-  posterBox.addEventListener('click', ev => { ev.preventDefault(); posterInput.click(); });
+  /* o clique no label já abre o seletor de arquivo nativamente (sem JS) */
   posterInput.addEventListener('change', () => {
     const file = posterInput.files[0];
     if(!file) return;
