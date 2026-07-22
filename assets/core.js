@@ -535,10 +535,17 @@ function paginaEdicao(){
   }
 
   /* -------- edição em andamento ou encerrada -------- */
-  const proxima = EDICOES
-    .map(e => ({ ano: e.ano, d: e.abreEm ? new Date(e.abreEm) : null }))
-    .filter(e => e.d && e.d > agora())
-    .sort((a,b) => a.d - b.d)[0];
+  /* próxima edição = o menor ano DEPOIS do atual no config.js;
+     o abreEm dela só é usado para o countdown (se faltar/for inválido,
+     o banner aparece sem contador em vez de pular para outro ano) */
+  const proximaCfg = EDICOES
+    .filter(e => e.ano > ANO)
+    .sort((a,b) => a.ano - b.ano)[0];
+  let proxima = null;
+  if(proximaCfg){
+    const d = proximaCfg.abreEm ? new Date(proximaCfg.abreEm) : null;
+    proxima = { ano: proximaCfg.ano, d: (d && !isNaN(d) && d > agora()) ? d : null };
+  }
 
   montarShell(`
     <div class="topbar">
@@ -554,7 +561,9 @@ function paginaEdicao(){
 
     <div class="end-banner" id="endBanner" style="display:none;">
       <div class="end-banner-msg">${esc(ED.mensagemFim || 'Agradecemos o apoio de todos! 🎉')}</div>
-      ${proxima ? `<div class="end-banner-countdown">Faltam <span class="cd" data-count-to="${proxima.d.toISOString()}">--</span> para o CETEC Festival ${proxima.ano}</div>` : ''}
+      ${proxima ? (proxima.d
+        ? `<div class="end-banner-countdown">Faltam <span class="cd" data-count-to="${proxima.d.toISOString()}">--</span> para o CETEC Festival ${proxima.ano}</div>`
+        : `<div class="end-banner-countdown">Nos vemos no CETEC Festival ${proxima.ano}!</div>`) : ''}
     </div>
 
     <div id="capture-area">
