@@ -238,6 +238,7 @@ iframe.video-embed-placeholder{ border: none; }
 .cell.label{ background: transparent; color: var(--text-muted); width: 42px; font-size: 12px; font-weight:700; justify-content:flex-end; padding-right: 4px; }
 .cell.header{ background: transparent; color: var(--text-muted); font-size: 12px; }
 .cell.empty-cell{ background: var(--gray-cell); color: var(--text-muted); }
+.cell.cell-void{ background: transparent; } /* noite com menos peças que as outras */
 .cell-avg{ background-color: var(--surface-2); border: 1.5px solid var(--gold); color: var(--text); }
 .cell-data{ cursor: default; }
 .cell-data:hover{ transform: scale(1.06); box-shadow: 0 0 0 2px rgba(255,255,255,.15); z-index:2; }

@@ -102,6 +102,25 @@ para editar fica no `hall-dados.js`:
   contam nesse limite — podem aparecer junto.
 - A legenda completa aparece na seção "As Badges" do Hall da Fama.
 
+## Edições fora do padrão (noites e peças variáveis)
+
+Cada edição pode ter formato próprio — tipo 2019, que pulou a segunda-feira
+e teve 4 peças na terça:
+
+- **Quantidade de noites**: `noites:` na linha do ano no `config.js`
+  (fica lá, e não no edicao.js, porque o menu lateral de TODAS as páginas
+  precisa saber quantas noites listar sem carregar os arquivos do ano).
+- **Dia sem apresentação**: não existe "noite pulada" — as noites são
+  numeradas em sequência (Noite 1, 2, 3...) e cada uma tem a própria data
+  no `noites/noite-N.js`. Se não teve segunda, a Noite 1 é terça e pronto.
+- **Quantidade de peças por noite**: é o tamanho da lista `pecas` do
+  `noites/noite-N.js`. Noite com 4 peças ganha linha E4 na grade; as outras
+  noites ficam com espaço vazio (célula invisível) naquela linha. O
+  `episodiosPorNoite` do edicao.js vira só o padrão para noites ainda sem
+  peças cadastradas.
+- ⚠️ NÃO reordene as peças de uma noite depois que já houver votos: a nota
+  fica amarrada à posição (1ª peça = E1). Reordenar troca as notas de dona.
+
 ## Celular
 
 O menu vira uma faixa compacta no topo (logo + botão ☰). Os links só aparecem

@@ -53,6 +53,15 @@ const NUM_NOITES = CFG_EDICAO ? CFG_EDICAO.noites : 5;
 const EPS = (ED && ED.episodiosPorNoite) ? ED.episodiosPorNoite : 3;
 const ND  = (typeof NOITES !== 'undefined') ? NOITES : {};
 
+/* o nº de episódios pode variar por noite: vale o tamanho da lista de peças
+   do noites/noite-N.js; noite sem peças cadastradas usa o episodiosPorNoite */
+function epsDaNoite(s){
+  const nd = ND[s];
+  return (nd && Array.isArray(nd.pecas) && nd.pecas.length) ? nd.pecas.length : EPS;
+}
+let MAX_EPS = EPS;
+for(let _s = 1; _s <= NUM_NOITES; _s++) MAX_EPS = Math.max(MAX_EPS, epsDaNoite(_s));
+
 function dataNoite(n){ return (ND[n] && ND[n].data) ? new Date(ND[n].data) : null; }
 const INICIO      = (ED && ED.inicio)     ? new Date(ED.inicio)     : null;
 const FIM_VOTACAO = (ED && ED.fimVotacao) ? new Date(ED.fimVotacao) : null;
@@ -228,9 +237,10 @@ function gridVazioHtml(){
   let h = `<div class="grid-row"><div class="cell label"></div>`;
   for(let s = 1; s <= NUM_NOITES; s++) h += `<div class="cell header">S${s}</div>`;
   h += `</div>`;
-  for(let e = 1; e <= EPS; e++){
+  for(let e = 1; e <= MAX_EPS; e++){
     h += `<div class="grid-row"><div class="cell label">E${e}</div>`;
-    for(let s = 1; s <= NUM_NOITES; s++) h += `<div class="cell empty-cell">–</div>`;
+    for(let s = 1; s <= NUM_NOITES; s++)
+      h += e <= epsDaNoite(s) ? `<div class="cell empty-cell">–</div>` : `<div class="cell cell-void"></div>`;
     h += `</div>`;
   }
   return h;
@@ -247,9 +257,10 @@ function buildDisplayGrid(containerId){
   for(let s = 1; s <= NUM_NOITES; s++) h += `<div class="cell cell-avg pop" id="${containerId}-avg-s${s}">–</div>`;
   h += `</div>`;
 
-  for(let e = 1; e <= EPS; e++){
+  for(let e = 1; e <= MAX_EPS; e++){
     h += `<div class="grid-row"><div class="cell label">E${e}</div>`;
     for(let s = 1; s <= NUM_NOITES; s++){
+      if(e > epsDaNoite(s)){ h += `<div class="cell cell-void"></div>`; continue; }
       const key = `s${s}e${e}`;
       h += `<div class="cell cell-data empty-cell pop" id="${containerId}-disp-${key}" style="animation-delay:${(s+e)*0.03}s">
         <span class="val"></span><span class="tooltip"></span>
@@ -268,7 +279,7 @@ function refreshDisplayGrids(){
     if(!document.getElementById(containerId)) return;
     for(let s = 1; s <= NUM_NOITES; s++){
       let seasonValues = [];
-      for(let e = 1; e <= EPS; e++){
+      for(let e = 1; e <= MAX_EPS; e++){
         const key = `s${s}e${e}`;
         const vals = valoresDaChave(key);
         seasonValues = seasonValues.concat(vals);
@@ -331,7 +342,7 @@ function renderSubmissions(){
     const avg = media(vals);
     let chips = '';
     for(let s = 1; s <= NUM_NOITES; s++){
-      for(let e = 1; e <= EPS; e++){
+      for(let e = 1; e <= epsDaNoite(s); e++){
         const v = sub.grid[`s${s}e${e}`];
         chips += v !== undefined
           ? `<div class="mini-chip" style="background:${corDaNota(v)}"></div>`
@@ -376,9 +387,10 @@ function buildMiniGrid(containerId, grid){
   let h = `<div class="grid-row"><div class="cell label"></div>`;
   for(let s = 1; s <= NUM_NOITES; s++) h += `<div class="cell header">S${s}</div>`;
   h += `</div>`;
-  for(let e = 1; e <= EPS; e++){
+  for(let e = 1; e <= MAX_EPS; e++){
     h += `<div class="grid-row"><div class="cell label">E${e}</div>`;
     for(let s = 1; s <= NUM_NOITES; s++){
+      if(e > epsDaNoite(s)){ h += `<div class="cell cell-void"></div>`; continue; }
       const v = grid[`s${s}e${e}`];
       h += `<div class="cell" style="background:${v !== undefined ? corDaNota(v) : 'var(--gray-cell)'}; color:${v !== undefined ? '#14161a' : 'var(--text-muted)'}">${v !== undefined ? Number(v).toFixed(1) : '–'}</div>`;
     }
@@ -408,9 +420,10 @@ function buildFormGrid(){
   let h = `<div class="grid-row"><div class="cell label"></div>`;
   for(let s = 1; s <= NUM_NOITES; s++) h += `<div class="cell header">${cabecalhoNoite(s)}</div>`;
   h += `</div>`;
-  for(let e = 1; e <= EPS; e++){
+  for(let e = 1; e <= MAX_EPS; e++){
     h += `<div class="grid-row"><div class="cell label">E${e}</div>`;
     for(let s = 1; s <= NUM_NOITES; s++){
+      if(e > epsDaNoite(s)){ h += `<div class="cell cell-void"></div>`; continue; }
       const key = `s${s}e${e}`;
       if(!noiteLiberada(s)){
         h += `<div class="cell cell-input locked" title="Libera em ${fmtData(dataNoite(s))}">🔒</div>`;
@@ -453,7 +466,7 @@ function updateFillHint(){
 
   const filled = Object.keys(formValues).length;
   let disponiveis = 0;
-  for(let s = 1; s <= NUM_NOITES; s++){ if(noiteLiberada(s)) disponiveis += EPS; }
+  for(let s = 1; s <= NUM_NOITES; s++){ if(noiteLiberada(s)) disponiveis += epsDaNoite(s); }
 
   const restante = cooldownRestanteMs();
   if(restante > 0){
@@ -1090,9 +1103,10 @@ function paginaMonte(){
     h += `<div class="grid-row"><div class="cell label" style="font-size:10px;">MÉDIA</div>`;
     for(let s = 1; s <= NUM_NOITES; s++) h += `<div class="cell cell-avg" id="custom-avg-s${s}">–</div>`;
     h += `</div>`;
-    for(let e = 1; e <= EPS; e++){
+    for(let e = 1; e <= MAX_EPS; e++){
       h += `<div class="grid-row"><div class="cell label">E${e}</div>`;
       for(let s = 1; s <= NUM_NOITES; s++){
+        if(e > epsDaNoite(s)){ h += `<div class="cell cell-void"></div>`; continue; }
         const key = `s${s}e${e}`;
         const existing = customValues[key];
         h += `<div class="cell cell-input" id="ccell-${key}" style="${existing !== undefined ? `background-color:${corDaNota(existing)}` : ''}">
@@ -1129,7 +1143,7 @@ function paginaMonte(){
   function atualizarMedias(){
     for(let s = 1; s <= NUM_NOITES; s++){
       const vals = [];
-      for(let e = 1; e <= EPS; e++){
+      for(let e = 1; e <= epsDaNoite(s); e++){
         const v = customValues[`s${s}e${e}`];
         if(v !== undefined) vals.push(v);
       }
@@ -1289,6 +1303,12 @@ async function paginaHall(){
   }
 
   const edicoes = await carregarEdicoes();
+  /* edições futuras (inicio ainda não chegou) ficam fora das contagens,
+     dos gráficos e do heatmap — nada de spoiler nem de "3 edições" antes da hora */
+  const edRealizadas = edicoes.filter(d => {
+    const ini = d.ed && d.ed.inicio ? new Date(d.ed.inicio) : null;
+    return !ini || isNaN(ini) || ini <= new Date();
+  });
   const minAv = (typeof HALL !== 'undefined' && HALL.minAvaliacoes) || 3;
   const CORES_DIST = ['#7a1f1f','#8c2525','#9e2b2b','#b03131','#c23737','#d93c3c','#e48135','#f3ca4d','#31b96e','#188a53','#0f6b3f'];
 
@@ -1355,7 +1375,7 @@ async function paginaHall(){
     const pecas = [], noites = [], anos = [], todasNotas = [], todosSubs = [];
     let totalVotos = 0, totalPecas = 0;
 
-    edicoes.forEach(d => {
+    edRealizadas.forEach(d => {
       const subs = votos[d.cfg.ano] || [];
       totalVotos += subs.length;
       subs.forEach(su => {
@@ -1580,7 +1600,7 @@ async function paginaHall(){
 
     /* ---- Seção 1: cards ---- */
     const cards = [
-      { big: HALL.edicoesRealizadas || String(edicoes.length), lbl: 'Edições' },
+      { big: HALL.edicoesRealizadas || String(edRealizadas.length), lbl: 'Edições' },
       { big: String(s.totalPecas), lbl: 'Peças apresentadas' },
       { big: String(s.totalVotos), lbl: 'Avaliações recebidas' },
       { big: mediaHist === null ? '–' : mediaHist.toFixed(1), lbl: 'Média histórica', sub: anoDest ? `vs ${anoDest.avg.toFixed(1)} em ${anoDest.ano}` : '' },
@@ -1661,7 +1681,7 @@ async function paginaHall(){
     /* heatmap: anos × noites */
     let hm = '<div class="hm-row"><div class="hm-lbl"></div>' +
       Array.from({ length: maxN }, (_, i) => `<div class="hm-lbl">N${i+1}</div>`).join('') + '</div>';
-    edicoes.forEach(d => {
+    edRealizadas.forEach(d => {
       hm += `<div class="hm-row"><div class="hm-lbl">${d.cfg.ano}</div>`;
       for(let nn = 1; nn <= maxN; nn++){
         const x = s.noites.find(v => v.ano === d.cfg.ano && v.noite === nn);

@@ -11,6 +11,11 @@
 <script>const BASE = '../'; const PAGINA = { tipo: 'monte' };</script>
 <script src="../config.js"></script>
 <script src="edicao.js"></script>
+<script>
+/* carrega as noites para a grade saber quantas peças cada noite tem */
+const _n = (EDICOES.find(e => e.ano === EDICAO.ano) || { noites: 5 }).noites;
+for(let n = 1; n <= _n; n++) document.write('<script src="noites/noite-' + n + '.js"><\/script>');
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="../assets/core.js"></script>
 </body>
