@@ -199,6 +199,7 @@ iframe.video-embed-placeholder{ border: none; }
 .title-section h1[contenteditable="true"]:hover{ border-bottom-color: var(--border); }
 .title-section h1[contenteditable="true"]:focus{ border-bottom-color: var(--gold); }
 .rating-line{ display:flex; align-items:baseline; gap:6px; margin-bottom: 8px; }
+.rating-line .star{ color: var(--gold); font-size: 15px; line-height:1; }
 .rating-line .num{ font-size:18px; font-weight:800; }
 .rating-line .cnt{ font-size:11px; color: var(--text-muted); }
 .description{
