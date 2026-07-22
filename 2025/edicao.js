@@ -8,7 +8,7 @@
    ===================================================================== */
 
 const EDICAO = {
-  ano: 2026,
+  ano: 2025,
   titulo: 'Cetec Festival 2025',
   descricao: 'Quem passa pelo CETEC não esquece.',
 
