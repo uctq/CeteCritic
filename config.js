@@ -24,8 +24,8 @@ const EDICOES = [
     abreEm: '2027-07-12T19:00:00-03:00',
     monteAbreEm: '2027-07-01T00:00:00-03:00' },
   { ano: 2028, noites: 5,
-    abreEm: '2027-07-10T19:00:00-03:00',
-    monteAbreEm: '2027-07-01T00:00:00-03:00' },
+    abreEm: '2028-07-10T19:00:00-03:00',
+    monteAbreEm: '2028-07-01T00:00:00-03:00' },
 ];
 
 /* Planilha (Google Apps Script) que guarda os votos — vale para todos os anos */
