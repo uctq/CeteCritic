@@ -35,6 +35,11 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbx_HwHNycDjcKfSsYfVm6j1
 /* Nota máxima aceita nos formulários (mantenha igual ao MAX_RATING do Apps Script) */
 const NOTA_MAXIMA = 10;
 
+/* Votos antigos SEM a coluna "ano" preenchida na planilha pertencem a esta
+   edição (os primeiros votos de 2026 foram salvos antes da coluna existir).
+   Sem isso, eles apareceriam em todas as edições. */
+const ANO_VOTOS_ANTIGOS = 2026;
+
 /* Tempo mínimo entre envios de avaliação (anti-spam), em minutos */
 const COOLDOWN_MINUTOS = 5;
 

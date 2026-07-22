@@ -99,9 +99,9 @@ async function fetchVotos(){
     const res  = await fetch(API_URL + '?year=' + ANO + '&_=' + Date.now(), { cache: 'no-store' });
     const data = await res.json();
     if(Array.isArray(data)){
-      submissions = data.filter(s => !s.year || Number(s.year) === ANO);
+      submissions = filtrarVotosDoAno(data, ANO);
     } else {
-      submissions = (data.submissions || []).filter(s => !s.year || Number(s.year) === ANO);
+      submissions = filtrarVotosDoAno(data.submissions, ANO);
       if(typeof data.serverNow === 'number') serverTimeOffset = data.serverNow - Date.now();
       serverSaysClosed = !!data.votingClosed;
     }
@@ -124,6 +124,13 @@ async function postVoto(sub){
 
 function valoresDaChave(key){
   return submissions.map(s => s.grid[key]).filter(v => v !== undefined && v !== null);
+}
+
+/* Cada voto pertence a UMA edição. Voto sem ano (linhas antigas da planilha)
+   pertence ao ANO_VOTOS_ANTIGOS do config.js — nunca a todas as edições. */
+const ANO_LEGADO = (typeof ANO_VOTOS_ANTIGOS !== 'undefined') ? ANO_VOTOS_ANTIGOS : 2026;
+function filtrarVotosDoAno(lista, ano){
+  return (lista || []).filter(s => (s.year ? Number(s.year) : ANO_LEGADO) === Number(ano));
 }
 
 /* ---------------------- shell (sidebar + rodapé + modais) ---------------------- */
@@ -959,7 +966,7 @@ function paginaNoite(n){
       const outros = await Promise.all(EDICOES.filter(e => e.ano !== ANO).map(async e => {
         const r = await fetch(API_URL + '?year=' + e.ano + '&_=' + Date.now(), { cache: 'no-store' });
         const j = await r.json();
-        return { ano: e.ano, subs: Array.isArray(j) ? j : (j.submissions || []) };
+        return { ano: e.ano, subs: filtrarVotosDoAno(Array.isArray(j) ? j : (j.submissions || []), e.ano) };
       }));
       const todos = [{ ano: ANO, subs: submissions }, ...outros];
       let best = null;
@@ -1816,7 +1823,7 @@ async function paginaHall(){
           /* no-store + _ : fura o cache pra sempre pegar votos frescos */
           const r = await fetch(API_URL + '?year=' + d.cfg.ano + '&_=' + Date.now(), { cache: 'no-store' });
           const j = await r.json();
-          votos[d.cfg.ano] = Array.isArray(j) ? j : (j.submissions || []);
+          votos[d.cfg.ano] = filtrarVotosDoAno(Array.isArray(j) ? j : (j.submissions || []), d.cfg.ano);
         }catch(e){ votos[d.cfg.ano] = []; }
       }));
       stats = calcular(votos);
