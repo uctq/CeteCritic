@@ -85,7 +85,9 @@ let submissions = [];
 async function fetchVotos(){
   if(!ANO || !API_URL || API_URL.startsWith('COLE_AQUI')) return;
   try{
-    const res  = await fetch(API_URL + '?year=' + ANO);
+    /* cache:'no-store' + parâmetro _ : garante que o navegador/Google não
+       devolva uma resposta velha em cache (senão o site "não atualiza") */
+    const res  = await fetch(API_URL + '?year=' + ANO + '&_=' + Date.now(), { cache: 'no-store' });
     const data = await res.json();
     if(Array.isArray(data)){
       submissions = data.filter(s => !s.year || Number(s.year) === ANO);
@@ -120,8 +122,11 @@ function htmlSidebar(){
   let h = `<div class="sidebar-logo">
     <img src="${BASE}assets/logo.png" alt="" onerror="this.style.display='none'">
     <span>CETEC<br>Critic</span>
+    <button class="nav-toggle" id="navToggle" aria-label="Abrir menu">☰</button>
   </div>
-  <button class="nav-link nav-parent" id="navMonte">Monte o Seu</button>`;
+  <div class="sidebar-nav" id="sidebarNav">
+  <button class="nav-link nav-parent" id="navMonte">Monte o Seu</button>
+  <a class="nav-link nav-parent${PAGINA.tipo === 'hall' ? ' active' : ''}" href="${BASE}hall.html">Hall da Fama</a>`;
 
   EDICOES.forEach(e => {
     const aberto = e.ano === ANO;
@@ -140,7 +145,7 @@ function htmlSidebar(){
       <div class="nav-children">${filhos}</div>
     </div>`;
   });
-  return h;
+  return h + '</div>'; /* fecha .sidebar-nav */
 }
 
 function htmlModalMonte(){
@@ -182,6 +187,11 @@ function montarShell(conteudo){
   });
   document.getElementById('monteModalClose').addEventListener('click', () => fecharOverlay(mo));
   mo.addEventListener('click', ev => { if(ev.target === mo) fecharOverlay(mo); });
+
+  /* menu retrátil no celular */
+  const navToggle = document.getElementById('navToggle');
+  if(navToggle) navToggle.addEventListener('click', () =>
+    document.querySelector('.sidebar').classList.toggle('nav-open'));
 }
 
 function fecharOverlay(el){
@@ -511,6 +521,104 @@ async function baixarImagem(areaId, nomeArquivo, btn){
   }
 }
 
+/* ---------------------- estatísticas & badges ---------------------- */
+function statsDeVals(vals){
+  const n = vals.length;
+  if(!n) return null;
+  const avg = vals.reduce((a,b)=>a+b,0)/n;
+  const std = Math.sqrt(vals.reduce((a,b)=>a+(b-avg)*(b-avg),0)/n);
+  return {
+    n, avg, std,
+    min: Math.min(...vals), max: Math.max(...vals),
+    p9: vals.filter(v => v >= 9).length / n,          // % de notas 9+
+    p10: vals.filter(v => v >= NOTA_MAXIMA - 0.01).length / n, // % de notas máximas
+    pos: vals.filter(v => v >= 7).length,             // elogios
+    neg: vals.filter(v => v <= 4).length              // críticas
+  };
+}
+
+const BADGES_DEF = {
+  campea:       { emoji:'🥇', nome:'Campeã do ano', desc:'A peça com a maior nota média da edição.' },
+  melhorHist:   { emoji:'⭐', nome:'Melhor episódio da história', desc:'A maior nota média entre TODAS as edições do festival.' },
+  polemica:     { emoji:'🔥', nome:'Polêmica', desc:'As notas mais divididas do ano — teve gente amando e gente detestando.' },
+  consistente:  { emoji:'🎯', nome:'Consistente', desc:'As notas mais parecidas do ano — quase todo mundo deu a mesma nota.' },
+  favorita:     { emoji:'👏', nome:'Favorita do público', desc:'A maior porcentagem de notas 9+ da edição.' },
+  maisAvaliada: { emoji:'📊', nome:'Mais avaliada', desc:'A peça que mais recebeu notas na edição.' },
+  bemRecebida:  { emoji:'📈', nome:'Bem recebida', desc:'Mais elogios (notas 7+) do que críticas (notas 4 ou menos).' }
+};
+
+/* calcula as badges de UMA edição a partir dos votos dela.
+   Retorna { 's1e1': [badge, ...], ... } */
+function badgesDoAno(subs){
+  const stats = {};
+  const chaves = new Set();
+  subs.forEach(s => Object.keys(s.grid).forEach(k => chaves.add(k)));
+  chaves.forEach(k => {
+    const vals = subs.map(s => Number(s.grid[k])).filter(v => !isNaN(v));
+    const st = statsDeVals(vals);
+    if(st) stats[k] = st;
+  });
+  const ks = Object.keys(stats);
+  const out = {};
+  ks.forEach(k => out[k] = []);
+  if(!ks.length) return out;
+
+  const minAv = (typeof HALL !== 'undefined' && HALL.minAvaliacoes) || 3;
+  let elig = ks.filter(k => stats[k].n >= minAv);
+  if(!elig.length) elig = ks; // pouca gente votou ainda: usa o que tem
+
+  function top(lista, f, maior){
+    let best = null;
+    lista.forEach(k => {
+      if(best === null || (maior ? f(stats[k]) > f(stats[best]) : f(stats[k]) < f(stats[best]))) best = k;
+    });
+    return best;
+  }
+  /* REGRA: no máximo 1 badge automática por peça por edição — vale a que
+     mais se encaixa, nesta ordem de prioridade. Se a vencedora de um
+     critério já tem badge melhor, aquele critério fica sem dono no ano.
+     (⭐ da história e as badges manuais do hall-dados.js não contam no limite.) */
+  const candidatos = [
+    ['campea',       top(elig, s => s.avg, true)],
+    ['favorita',     top(elig.filter(k => stats[k].p9 > 0), s => s.p9, true)],
+    ['polemica',     top(elig.filter(k => stats[k].std > 0), s => s.std, true)],
+    ['consistente',  elig.length > 1 ? top(elig, s => s.std, false) : null],
+    ['maisAvaliada', top(ks, s => s.n, true)]
+  ];
+  candidatos.forEach(([tipo, k]) => {
+    if(k && out[k] && out[k].length === 0) out[k].push(BADGES_DEF[tipo]);
+  });
+  /* consolação: também é ÚNICA — vai só para a peça sem badge com o melhor
+     saldo de elogios (7+) vs críticas (4-) */
+  const semBadge = elig.filter(k => out[k].length === 0 && stats[k].pos > stats[k].neg);
+  if(semBadge.length){
+    const bem = top(semBadge, s => s.pos - s.neg, true);
+    if(bem) out[bem].push(BADGES_DEF.bemRecebida);
+  }
+  return out;
+}
+
+function htmlBadges(lista){
+  return (lista || []).map(b => `<span class="badge" title="${b.nome}${b.desc ? ' — ' + b.desc : ''}">${b.emoji}</span>`).join('');
+}
+
+/* ---- badges extras (manuais, definidas no hall-dados.js) ----
+   O hall.html carrega o hall-dados.js direto; as páginas de noite buscam
+   o arquivo sob demanda para as badges extras aparecerem lá também. */
+let HALL_CFG = (typeof HALL !== 'undefined') ? HALL : null;
+async function carregarHallDados(){
+  if(HALL_CFG) return HALL_CFG;
+  try{
+    const txt = await fetch(BASE + 'hall-dados.js', { cache: 'no-store' }).then(r => r.text());
+    HALL_CFG = new Function(txt + '\n;return HALL;')();
+  }catch(e){ HALL_CFG = {}; }
+  return HALL_CFG;
+}
+function badgesExtrasDaPeca(ano, key){
+  const lista = (HALL_CFG && HALL_CFG.badgesExtras) || [];
+  return lista.filter(b => Number(b.ano) === Number(ano) && b.chave === key);
+}
+
 /* =====================================================================
    PÁGINA: EDIÇÃO (votação / notas agregadas)
    ===================================================================== */
@@ -796,7 +904,7 @@ function paginaNoite(n){
       html += `<div class="noite-card">
         <div class="noite-card-head">
           <div>
-            <div class="noite-card-title">${esc(info.titulo)}</div>
+            <div class="noite-card-title">${esc(info.titulo)} <span class="peca-badges" id="badges-${key}"></span></div>
             <div class="noite-card-turma">Turma ${esc(info.turma)}</div>
           </div>
           <div class="noite-card-rating" id="nota-${key}"><div class="val empty">–</div><div class="cnt">Sem avaliações</div></div>
@@ -811,6 +919,7 @@ function paginaNoite(n){
   }
 
   function atualizarNotas(){
+    const bmap = badgesDoAno(submissions); // badges relativas à edição inteira
     pecas.forEach((info, idx) => {
       const key = `s${n}e${idx + 1}`;
       const box = document.getElementById(`nota-${key}`);
@@ -820,11 +929,45 @@ function paginaNoite(n){
       box.innerHTML = avg === null
         ? `<div class="val empty">–</div><div class="cnt">Sem avaliações</div>`
         : `<div class="val" style="background-color:${corDaNota(avg)}">${avg.toFixed(1)}</div><div class="cnt">${vals.length} avaliaç${vals.length === 1 ? 'ão' : 'ões'}</div>`;
+      const bx = document.getElementById(`badges-${key}`);
+      if(bx) bx.innerHTML = htmlBadges(bmap[key]) +
+        (key === chaveMelhorHistoria ? `<span class="badge" title="${BADGES_DEF.melhorHist.nome}">${BADGES_DEF.melhorHist.emoji}</span>` : '') +
+        htmlBadges(badgesExtrasDaPeca(ANO, key));
     });
   }
 
   renderCards();
-  fetchVotos().then(atualizarNotas);
+
+  /* badge ⭐: confere se o melhor episódio da HISTÓRIA (todas as edições,
+     mínimo de 3 avaliações) é uma peça desta noite */
+  let chaveMelhorHistoria = null;
+  async function checarMelhorHistoria(){
+    try{
+      const outros = await Promise.all(EDICOES.filter(e => e.ano !== ANO).map(async e => {
+        const r = await fetch(API_URL + '?year=' + e.ano + '&_=' + Date.now(), { cache: 'no-store' });
+        const j = await r.json();
+        return { ano: e.ano, subs: Array.isArray(j) ? j : (j.submissions || []) };
+      }));
+      const todos = [{ ano: ANO, subs: submissions }, ...outros];
+      let best = null;
+      todos.forEach(t => {
+        const chaves = new Set();
+        t.subs.forEach(s => Object.keys(s.grid).forEach(k => chaves.add(k)));
+        chaves.forEach(k => {
+          const vals = t.subs.map(s => Number(s.grid[k])).filter(v => !isNaN(v));
+          const st = statsDeVals(vals);
+          if(st && st.n >= 3 && (best === null || st.avg > best.avg)) best = { ano: t.ano, key: k, avg: st.avg };
+        });
+      });
+      if(best && best.ano === ANO && best.key.indexOf(`s${n}e`) === 0) chaveMelhorHistoria = best.key;
+    }catch(e){ /* API fora do ar: apenas não mostra a estrela */ }
+  }
+
+  fetchVotos().then(() => {
+    atualizarNotas();
+    checarMelhorHistoria().then(atualizarNotas);
+    carregarHallDados().then(atualizarNotas); // badges extras do hall-dados.js
+  });
   setInterval(() => fetchVotos().then(atualizarNotas), 20000);
 }
 
@@ -1030,6 +1173,643 @@ function paginaMonte(){
   buildCustomGrid();
 }
 
+/* =====================================================================
+   PÁGINA: HALL DA FAMA (estatísticas de todas as edições, Chart.js)
+   ===================================================================== */
+async function paginaHall(){
+  document.title = 'CETECCritic - Hall da Fama';
+  montarShell(`
+    <div class="noite-intro">
+      <h1>Hall da Fama</h1>
+      <p>Recordes, rankings e estatísticas de todas as edições — atualizados automaticamente. <span class="hall-stamp" id="hallAtualizado"></span></p>
+    </div>
+
+    <div class="hall-cards" id="hallCards"><div class="empty-note">Carregando estatísticas...</div></div>
+
+    <div class="section">
+      <h2>🏅 As Badges</h2>
+      <div class="sub">Medalhas que as peças conquistam automaticamente (mínimo de ${(typeof HALL !== 'undefined' && HALL.minAvaliacoes) || 3} avaliações; cada peça leva no máximo 1 badge automática por edição — a que mais se encaixa). Elas aparecem ao lado do título da peça, na página da noite dela.</div>
+      <div class="badge-legend">${[
+        ...Object.values(BADGES_DEF),
+        ...(((typeof HALL !== 'undefined' && HALL.badgesExtras) || []).filter((b, i, arr) => arr.findIndex(x => x.nome === b.nome) === i))
+      ].map(b => `
+        <div class="badge-item">
+          <span class="badge-big">${b.emoji}</span>
+          <div><div class="rec-title">${b.nome}</div><div class="rec-text">${b.desc || ''}</div></div>
+        </div>`).join('')}
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>🏆 Top 10 Peças</h2>
+      <div class="sub">Clique em uma barra para abrir a página da noite da peça.</div>
+      <select class="hall-select" id="hallFiltroPecas"></select>
+      <div style="height:360px"><canvas id="chartTopPecas"></canvas></div>
+    </div>
+
+    <div class="section">
+      <h2>🌙 Top 10 Noites</h2>
+      <div class="sub">Melhor nota média por noite. Clique para abrir a noite.</div>
+      <select class="hall-select" id="hallFiltroNoites"></select>
+      <div style="height:360px"><canvas id="chartTopNoites"></canvas></div>
+    </div>
+
+    <div class="section">
+      <h2>🏅 Top Festivais</h2>
+      <div class="sub">Ranking das edições pela nota média geral. Clique para abrir a edição.</div>
+      <div style="height:240px"><canvas id="chartTopFestivais"></canvas></div>
+    </div>
+
+    <div class="section">
+      <h2>⚖️ ${EDICAO_EM_DESTAQUE} vs. história</h2>
+      <div class="sub">Nota média por noite: a edição em destaque comparada com quem você escolher.</div>
+      <div class="hall-filtros">Comparar com <select class="hall-select" id="hallCompara"><option value="hist">Média histórica</option></select></div>
+      <div style="height:240px"><canvas id="chartComparacao"></canvas></div>
+    </div>
+
+    <div class="section">
+      <h2>🆚 Comparar edições</h2>
+      <div class="sub">Escolha duas edições para ver as notas gerais e o detalhe noite a noite, episódio por episódio. Clique numa peça para abrir a página dela.</div>
+      <div class="hall-filtros">
+        <select class="hall-select" id="hallCompA"></select> vs
+        <select class="hall-select" id="hallCompB"></select>
+      </div>
+      <div class="hall-cards" id="compCards"></div>
+      <div style="height:240px; margin-bottom:16px"><canvas id="chartCompNoites"></canvas></div>
+      <div id="compDetalhe"></div>
+    </div>
+
+    <div class="section">
+      <h2>📈 Evolução do festival</h2>
+      <div class="sub">Nota média por edição e "exigência do público" (% de notas 9+). Clique num ponto para abrir a edição.</div>
+      <div class="hall-filtros">De <select class="hall-select" id="hallDe"></select> até <select class="hall-select" id="hallAte"></select></div>
+      <div style="height:240px"><canvas id="chartEvolucao"></canvas></div>
+      <div style="height:200px; margin-top:18px"><canvas id="chartP9"></canvas></div>
+    </div>
+
+    <div class="section">
+      <h2>🍩 Distribuição das notas</h2>
+      <div class="sub">Todas as notas já registradas no site, agrupadas de 0 a ${NOTA_MAXIMA}.</div>
+      <div style="height:300px"><canvas id="chartDist"></canvas></div>
+    </div>
+
+    <div class="section">
+      <h2>🗓️ Notas por noite ao longo dos anos</h2>
+      <div class="sub">Cada célula é a média da noite naquele ano. Clique para abrir.</div>
+      <div class="heatmap" id="hallHeatmap"></div>
+    </div>
+
+    <div class="section"><h2>🏆 Prateleira dos Campeões</h2><div class="sub">Recordes das peças.</div><div class="record-list" id="recPecas"></div></div>
+    <div class="section"><h2>🌙 A Batalha das Noites</h2><div class="sub">Recordes de programação.</div><div class="record-list" id="recNoites"></div></div>
+    <div class="section"><h2>📅 Linha do Tempo &amp; Edições</h2><div class="sub">Comparativo entre os anos.</div><div class="record-list" id="recEdicoes"></div></div>
+    <div class="section"><h2>👥 Números da Comunidade</h2><div class="sub">A escala da plateia do CETECCritic.</div><div class="record-list" id="recComunidade"></div></div>
+    <div class="section" id="secCurio" style="display:none"><h2>🎭 Curiosidades</h2><div class="record-list" id="recCurio"></div></div>`);
+
+  if(typeof Chart !== 'undefined'){
+    Chart.defaults.color = '#9a9ea6';
+    Chart.defaults.borderColor = '#2c2e33';
+    Chart.defaults.font.family = "'Inter', sans-serif";
+  }
+
+  /* carrega os dados (edicao.js + noites/*.js) de TODAS as edições do config.js */
+  async function carregarEdicoes(){
+    const out = [];
+    for(const cfg of EDICOES){
+      try{
+        const textos = await Promise.all([
+          fetch(`${BASE}${cfg.ano}/edicao.js`).then(r => r.text()),
+          ...Array.from({ length: cfg.noites }, (_, i) =>
+            fetch(`${BASE}${cfg.ano}/noites/noite-${i+1}.js`).then(r => r.text()))
+        ]);
+        const d = new Function(textos.join('\n') + '\n;return { EDICAO, NOITES };')();
+        out.push({ cfg, ed: d.EDICAO, noites: d.NOITES });
+      }catch(e){ console.warn('Hall: falha ao carregar edição', cfg.ano, e); }
+    }
+    return out;
+  }
+
+  const edicoes = await carregarEdicoes();
+  const minAv = (typeof HALL !== 'undefined' && HALL.minAvaliacoes) || 3;
+  const CORES_DIST = ['#7a1f1f','#8c2525','#9e2b2b','#b03131','#c23737','#d93c3c','#e48135','#f3ca4d','#31b96e','#188a53','#0f6b3f'];
+
+  /* gráficos são recriados a cada atualização — o registro evita vazamento */
+  const registro = {};
+  function desenhar(id, config){
+    const el = document.getElementById(id);
+    if(!el || typeof Chart === 'undefined') return;
+    if(registro[id]) registro[id].destroy();
+    registro[id] = new Chart(el.getContext('2d'), config);
+  }
+  const barraClicavel = (itens, urlDe) => ({
+    onClick: (e, els) => { if(els.length) location.href = urlDe(itens[els[0].index]); },
+    onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; }
+  });
+
+  let stats = null;
+  let filtroPecas = 'all';
+  let filtroNoites = 'all';
+  let comparaCom = 'hist';
+
+  /* filtros de período (o "último ano" = edição mais recente com votos) */
+  const PERIODOS = [
+    { v: 'all', txt: 'Todos os tempos' },
+    { v: '1',   txt: 'Último ano' },
+    { v: '3',   txt: 'Últimos 3 anos' },
+    { v: '5',   txt: 'Últimos 5 anos' },
+    { v: '10',  txt: 'Últimos 10 anos' },
+    { v: '20',  txt: 'Últimos 20 anos' }
+  ];
+  const selPecas = document.getElementById('hallFiltroPecas');
+  const selNoites = document.getElementById('hallFiltroNoites');
+  [selPecas, selNoites].forEach(sel => sel.innerHTML = PERIODOS.map(p => `<option value="${p.v}">${p.txt}</option>`).join(''));
+  selPecas.addEventListener('change', () => { filtroPecas = selPecas.value; desenharTopPecas(); });
+  selNoites.addEventListener('change', () => { filtroNoites = selNoites.value; desenharTopNoites(); });
+  document.getElementById('hallCompara').addEventListener('change', ev => { comparaCom = ev.target.value; desenharComparacao(); });
+  let compA = null, compB = null;
+  document.getElementById('hallCompA').addEventListener('change', ev => { compA = Number(ev.target.value); desenharCompEdicoes(); });
+  document.getElementById('hallCompB').addEventListener('change', ev => { compB = Number(ev.target.value); desenharCompEdicoes(); });
+  document.getElementById('hallDe').addEventListener('change', desenharEvolucao);
+  document.getElementById('hallAte').addEventListener('change', desenharEvolucao);
+
+  function anoReferencia(){
+    return stats && stats.anos.length ? Math.max(...stats.anos.map(a => a.ano)) : Math.max(...EDICOES.map(e => e.ano));
+  }
+  function dentroDoPeriodo(ano, filtro){
+    if(filtro === 'all') return true;
+    return ano >= anoReferencia() - (Number(filtro) - 1);
+  }
+
+  const rItem = r => {
+    const inner = `<span class="rec-emoji">${r.emoji}</span><div><div class="rec-title">${esc(r.titulo)}</div><div class="rec-text">${esc(r.texto)}</div></div>`;
+    return r.url ? `<a class="record-item" href="${r.url}">${inner}</a>` : `<div class="record-item">${inner}</div>`;
+  };
+  const preencher = (id, recs) => {
+    const el = document.getElementById(id);
+    if(el) el.innerHTML = recs.length ? recs.map(rItem).join('') : '<div class="empty-note">Ainda não há avaliações suficientes.</div>';
+  };
+  const topDe = (lista, f, maior = true) => lista.length ? [...lista].sort((a,b) => maior ? f(b)-f(a) : f(a)-f(b))[0] : null;
+  const fmtP = p => `${p.titulo} — ${p.ano}, Noite ${p.noite} (nota ${p.st.avg.toFixed(1)}, ${p.st.n} avaliaç${p.st.n === 1 ? 'ão' : 'ões'})`;
+
+  /* ---------- cálculo de todas as estatísticas ---------- */
+  function calcular(votos){
+    const pecas = [], noites = [], anos = [], todasNotas = [], todosSubs = [];
+    let totalVotos = 0, totalPecas = 0;
+
+    edicoes.forEach(d => {
+      const subs = votos[d.cfg.ano] || [];
+      totalVotos += subs.length;
+      subs.forEach(su => {
+        todosSubs.push(su);
+        Object.values(su.grid).forEach(v => { const x = Number(v); if(!isNaN(x)) todasNotas.push(x); });
+      });
+
+      let somaAno = 0, nAno = 0;
+      const noitesDoAno = [], pecasDoAno = [];
+      for(let n = 1; n <= d.cfg.noites; n++){
+        const nd = d.noites[n];
+        if(!nd || !(nd.pecas || []).length) continue;
+        let somaNoite = 0, nNoite = 0;
+        const pecasDaNoite = [];
+        nd.pecas.forEach((p, i) => {
+          totalPecas++;
+          const key = `s${n}e${i+1}`;
+          const vals = subs.map(su => Number(su.grid[key])).filter(v => !isNaN(v));
+          const st = statsDeVals(vals);
+          const item = { ano: d.cfg.ano, noite: n, ep: i+1, titulo: p.titulo, turma: p.turma, st, url: `${BASE}${d.cfg.ano}/noite-${n}.html` };
+          pecas.push(item);
+          if(st){ somaNoite += st.avg * st.n; nNoite += st.n; pecasDaNoite.push(item); pecasDoAno.push(item); }
+        });
+        if(nNoite){
+          const nn = { ano: d.cfg.ano, noite: n, avg: somaNoite/nNoite, n: nNoite, pecas: pecasDaNoite, url: `${BASE}${d.cfg.ano}/noite-${n}.html` };
+          noites.push(nn); noitesDoAno.push(nn);
+          somaAno += somaNoite; nAno += nNoite;
+        }
+      }
+      if(nAno){
+        const valsAno = [];
+        subs.forEach(su => Object.values(su.grid).forEach(v => { const x = Number(v); if(!isNaN(x)) valsAno.push(x); }));
+        const avgs = pecasDoAno.map(p => p.st.avg);
+        const ordN = [...noitesDoAno].sort((a,b) => a.noite - b.noite);
+        anos.push({
+          ano: d.cfg.ano,
+          avg: somaAno/nAno,
+          nVals: nAno,
+          subs: subs.length,
+          polar: avgs.length > 1 ? Math.max(...avgs) - Math.min(...avgs) : null,
+          p9: valsAno.length ? valsAno.filter(v => v >= 9).length / valsAno.length : 0,
+          cresc: ordN.length > 1 ? { d: ordN[ordN.length-1].avg - ordN[0].avg, de: ordN[0], para: ordN[ordN.length-1] } : null,
+          avalPorPeca: pecasDoAno.length ? nAno / pecasDoAno.length : null
+        });
+      }
+    });
+    return { pecas, noites, anos, todasNotas, totalVotos, totalPecas, todosSubs };
+  }
+
+  /* ---------- gráficos que dependem de filtros ---------- */
+  function desenharTopPecas(){
+    if(!stats) return;
+    const lista = stats.pecas.filter(p => p.st && dentroDoPeriodo(p.ano, filtroPecas));
+    let elig = lista.filter(p => p.st.n >= minAv);
+    if(!elig.length) elig = lista;
+    const top = [...elig].sort((a,b) => b.st.avg - a.st.avg || b.st.n - a.st.n).slice(0, 10);
+    desenhar('chartTopPecas', {
+      type: 'bar',
+      data: {
+        labels: top.map(p => `${p.titulo} (${p.ano})`),
+        datasets: [{ data: top.map(p => Number(p.st.avg.toFixed(2))), backgroundColor: top.map(p => corDaNota(p.st.avg)) }]
+      },
+      options: {
+        indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+        ...barraClicavel(top, p => p.url),
+        plugins: { legend: { display: false } },
+        scales: { x: { min: 0, max: NOTA_MAXIMA } }
+      }
+    });
+  }
+
+  function desenharTopNoites(){
+    if(!stats) return;
+    const lista = stats.noites.filter(x => dentroDoPeriodo(x.ano, filtroNoites));
+    const top = [...lista].sort((a,b) => b.avg - a.avg).slice(0, 10);
+    desenhar('chartTopNoites', {
+      type: 'bar',
+      data: { labels: top.map(x => `Noite ${x.noite} · ${x.ano}`), datasets: [{ data: top.map(x => Number(x.avg.toFixed(2))), backgroundColor: top.map(x => corDaNota(x.avg)) }] },
+      options: {
+        indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+        ...barraClicavel(top, x => x.url),
+        plugins: { legend: { display: false } },
+        scales: { x: { min: 0, max: NOTA_MAXIMA } }
+      }
+    });
+  }
+
+  function desenharComparacao(){
+    if(!stats) return;
+    const maxN = Math.max(...EDICOES.map(e => e.noites));
+    const labelsN = [], destPorNoite = [], outroPorNoite = [];
+    for(let nn = 1; nn <= maxN; nn++){
+      labelsN.push('Noite ' + nn);
+      const dst = stats.noites.find(x => x.noite === nn && x.ano === EDICAO_EM_DESTAQUE);
+      destPorNoite.push(dst ? Number(dst.avg.toFixed(2)) : null);
+      if(comparaCom === 'hist'){
+        const todas = stats.noites.filter(x => x.noite === nn);
+        if(todas.length){
+          let sm = 0, cnt = 0;
+          todas.forEach(x => { sm += x.avg * x.n; cnt += x.n; });
+          outroPorNoite.push(Number((sm/cnt).toFixed(2)));
+        } else outroPorNoite.push(null);
+      } else {
+        const outro = stats.noites.find(x => x.noite === nn && x.ano === Number(comparaCom));
+        outroPorNoite.push(outro ? Number(outro.avg.toFixed(2)) : null);
+      }
+    }
+    desenhar('chartComparacao', {
+      type: 'bar',
+      data: { labels: labelsN, datasets: [
+        { label: String(EDICAO_EM_DESTAQUE), data: destPorNoite, backgroundColor: '#f5c518' },
+        { label: comparaCom === 'hist' ? 'Média histórica' : 'Edição ' + comparaCom, data: outroPorNoite, backgroundColor: '#5a5e66' }
+      ]},
+      options: { responsive: true, maintainAspectRatio: false, scales: { y: { min: 0, max: NOTA_MAXIMA } } }
+    });
+  }
+
+  function desenharCompEdicoes(){
+    if(!stats || compA === null || compB === null) return;
+    const cfgA = EDICOES.find(e => e.ano === compA) || { noites: 5 };
+    const cfgB = EDICOES.find(e => e.ano === compB) || { noites: 5 };
+    const anoA = stats.anos.find(a => a.ano === compA);
+    const anoB = stats.anos.find(a => a.ano === compB);
+
+    /* cards-resumo: nota geral de cada edição + diferença */
+    const cardAno = (ano, info, cor) => `
+      <div class="hall-card">
+        <div class="big" style="color:${cor}">${info ? info.avg.toFixed(1) : '–'}</div>
+        <div class="lbl">${ano}</div>
+        <div class="subtxt">${info ? `${info.subs} avaliações · ${info.nVals} notas` : 'sem avaliações'}</div>
+      </div>`;
+    let diffHtml = '';
+    if(anoA && anoB){
+      const d = anoA.avg - anoB.avg;
+      diffHtml = `<div class="hall-card"><div class="big">${d > 0 ? '+' : ''}${d.toFixed(1)}</div><div class="lbl">Diferença</div><div class="subtxt">${Math.abs(d) < 0.05 ? 'empate técnico' : (d > 0 ? compA : compB) + ' na frente'}</div></div>`;
+    }
+    document.getElementById('compCards').innerHTML = cardAno(compA, anoA, '#f5c518') + cardAno(compB, anoB, '#8ab4f8') + diffHtml;
+
+    /* barras agrupadas: média por noite das duas edições */
+    const maxN = Math.max(cfgA.noites || 5, cfgB.noites || 5);
+    const labels = [], dA = [], dB = [];
+    for(let n = 1; n <= maxN; n++){
+      labels.push('Noite ' + n);
+      const xA = stats.noites.find(x => x.ano === compA && x.noite === n);
+      const xB = stats.noites.find(x => x.ano === compB && x.noite === n);
+      dA.push(xA ? Number(xA.avg.toFixed(2)) : null);
+      dB.push(xB ? Number(xB.avg.toFixed(2)) : null);
+    }
+    desenhar('chartCompNoites', {
+      type: 'bar',
+      data: { labels, datasets: [
+        { label: String(compA), data: dA, backgroundColor: '#f5c518' },
+        { label: String(compB), data: dB, backgroundColor: '#8ab4f8' }
+      ]},
+      options: { responsive: true, maintainAspectRatio: false, scales: { y: { min: 0, max: NOTA_MAXIMA } } }
+    });
+
+    /* detalhe: episódio por episódio, lado a lado */
+    const chip = p => {
+      if(!p) return '<div class="comp-side empty">—</div>';
+      const nota = p.st ? p.st.avg.toFixed(1) : '–';
+      const cor = p.st ? corDaNota(p.st.avg) : 'var(--gray-cell)';
+      const corTxt = p.st ? '#14161a' : 'var(--text-muted)';
+      return `<a class="comp-side" href="${p.url}">
+        <span class="comp-nota" style="background:${cor}; color:${corTxt}">${nota}</span>
+        <span class="comp-titulo">${esc(p.titulo)}</span>
+      </a>`;
+    };
+    let html = '';
+    for(let n = 1; n <= maxN; n++){
+      const pecasA = stats.pecas.filter(p => p.ano === compA && p.noite === n);
+      const pecasB = stats.pecas.filter(p => p.ano === compB && p.noite === n);
+      if(!pecasA.length && !pecasB.length) continue;
+      const xA = stats.noites.find(x => x.ano === compA && x.noite === n);
+      const xB = stats.noites.find(x => x.ano === compB && x.noite === n);
+      html += `<h3 class="subhead">Noite ${n} — ${compA}: ${xA ? xA.avg.toFixed(1) : '–'} · ${compB}: ${xB ? xB.avg.toFixed(1) : '–'}</h3>`;
+      const maxEp = Math.max(pecasA.length, pecasB.length);
+      for(let e = 1; e <= maxEp; e++){
+        const pA = pecasA.find(p => p.ep === e);
+        const pB = pecasB.find(p => p.ep === e);
+        html += `<div class="comp-row">${chip(pA)}<div class="comp-ep">E${e}</div>${chip(pB)}</div>`;
+      }
+    }
+    document.getElementById('compDetalhe').innerHTML = html || '<div class="empty-note">Nenhuma peça cadastrada nas edições escolhidas.</div>';
+  }
+
+  function desenharEvolucao(){
+    if(!stats) return;
+    const de = Number(document.getElementById('hallDe').value) || 0;
+    const ate = Number(document.getElementById('hallAte').value) || 9999;
+    const lista = stats.anos.filter(a => a.ano >= de && a.ano <= ate).sort((a,b) => a.ano - b.ano);
+    desenhar('chartEvolucao', {
+      type: 'line',
+      data: { labels: lista.map(a => a.ano), datasets: [{ label: 'Nota média', data: lista.map(a => Number(a.avg.toFixed(2))), borderColor: '#f5c518', backgroundColor: 'rgba(245,197,24,.15)', fill: true, tension: .3, pointRadius: 5, pointBackgroundColor: '#f5c518' }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        ...barraClicavel(lista, a => `${BASE}${a.ano}/index.html`),
+        plugins: { legend: { display: false } },
+        scales: { y: { min: 0, max: NOTA_MAXIMA } }
+      }
+    });
+    desenhar('chartP9', {
+      type: 'line',
+      data: { labels: lista.map(a => a.ano), datasets: [{ label: '% de notas 9+', data: lista.map(a => Math.round(a.p9 * 1000) / 10), borderColor: '#31b96e', backgroundColor: 'rgba(49,185,110,.15)', fill: true, tension: .3, pointRadius: 4, pointBackgroundColor: '#31b96e' }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: true } }, scales: { y: { min: 0, max: 100, ticks: { callback: v => v + '%' } } } }
+    });
+  }
+
+  /* ---------- render completo ---------- */
+  function renderTudo(){
+    const s = stats;
+    const comVotos = s.pecas.filter(p => p.st);
+    let elig = comVotos.filter(p => p.st.n >= minAv);
+    if(!elig.length) elig = comVotos;
+
+    const total10s = s.todasNotas.filter(v => v >= NOTA_MAXIMA - 0.01).length;
+    const mediaHist = s.todasNotas.length ? s.todasNotas.reduce((a,b)=>a+b,0)/s.todasNotas.length : null;
+    const anoDest = s.anos.find(a => a.ano === EDICAO_EM_DESTAQUE);
+    const melhorAno = topDe(s.anos, a => a.avg);
+    const maisPart = topDe(s.anos, a => a.subs);
+    const maisPolar = topDe(s.anos.filter(a => a.polar !== null), a => a.polar);
+
+    /* ---- Seção 1: cards ---- */
+    const cards = [
+      { big: HALL.edicoesRealizadas || String(edicoes.length), lbl: 'Edições' },
+      { big: String(s.totalPecas), lbl: 'Peças apresentadas' },
+      { big: String(s.totalVotos), lbl: 'Avaliações recebidas' },
+      { big: mediaHist === null ? '–' : mediaHist.toFixed(1), lbl: 'Média histórica', sub: anoDest ? `vs ${anoDest.avg.toFixed(1)} em ${anoDest.ano}` : '' },
+      { big: String(total10s), lbl: `Notas ${NOTA_MAXIMA} dadas` }
+    ];
+    if(melhorAno) cards.push({ big: String(melhorAno.ano), lbl: 'Melhor edição', sub: `média ${melhorAno.avg.toFixed(1)}`, url: `${BASE}${melhorAno.ano}/index.html` });
+    if(maisPart && maisPart.subs) cards.push({ big: String(maisPart.ano), lbl: 'Maior participação', sub: `${maisPart.subs} avaliações` });
+    if(maisPolar) cards.push({ big: String(maisPolar.ano), lbl: 'Mais polarizada', sub: `${maisPolar.polar.toFixed(1)} pts entre extremos` });
+    if(HALL.publicoEstimado) cards.push({ big: HALL.publicoEstimado, lbl: 'Público estimado' });
+    document.getElementById('hallCards').innerHTML = cards.map(c => {
+      const inner = `<div class="big">${c.big}</div><div class="lbl">${c.lbl}</div>${c.sub ? `<div class="subtxt">${c.sub}</div>` : ''}`;
+      return c.url ? `<a class="hall-card" href="${c.url}">${inner}</a>` : `<div class="hall-card">${inner}</div>`;
+    }).join('');
+
+    /* ---- gráficos ---- */
+    desenharTopPecas();
+    desenharTopNoites();
+
+    const rankAnos = [...s.anos].sort((a,b) => b.avg - a.avg);
+    desenhar('chartTopFestivais', {
+      type: 'bar',
+      data: { labels: rankAnos.map(a => a.ano), datasets: [{ data: rankAnos.map(a => Number(a.avg.toFixed(2))), backgroundColor: rankAnos.map(a => corDaNota(a.avg)) }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        ...barraClicavel(rankAnos, a => `${BASE}${a.ano}/index.html`),
+        plugins: { legend: { display: false } },
+        scales: { y: { min: 0, max: NOTA_MAXIMA } }
+      }
+    });
+
+    /* opções do "comparar com": média histórica + cada edição com votos (menos a em destaque) */
+    const selComp = document.getElementById('hallCompara');
+    const vComp = selComp.value;
+    selComp.innerHTML = '<option value="hist">Média histórica</option>' +
+      [...s.anos].sort((a,b) => b.ano - a.ano)
+        .filter(a => a.ano !== EDICAO_EM_DESTAQUE)
+        .map(a => `<option value="${a.ano}">Edição ${a.ano}</option>`).join('');
+    selComp.value = [...selComp.options].some(o => o.value === vComp) ? vComp : 'hist';
+    comparaCom = selComp.value;
+    desenharComparacao();
+
+    /* seletores do "Comparar edições" — todas as edições do config.js.
+       Padrão: as duas edições mais recentes com votos. */
+    const selA = document.getElementById('hallCompA');
+    const selB = document.getElementById('hallCompB');
+    if(!selA.options.length){
+      const anosTodos = [...EDICOES].map(e => e.ano).sort((a,b) => b - a);
+      const optsE = anosTodos.map(a => `<option value="${a}">Edição ${a}</option>`).join('');
+      selA.innerHTML = optsE; selB.innerHTML = optsE;
+      const comVoto = [...s.anos].sort((a,b) => b.ano - a.ano).map(a => a.ano);
+      compA = comVoto[0] ?? anosTodos[0];
+      compB = comVoto[1] ?? anosTodos.find(a => a !== compA) ?? compA;
+      selA.value = String(compA);
+      selB.value = String(compB);
+    }
+    desenharCompEdicoes();
+
+    const maxN = Math.max(...EDICOES.map(e => e.noites));
+
+    /* período do gráfico de evolução (mantém a escolha do usuário) */
+    const anosDisp = [...s.anos].sort((a,b) => a.ano - b.ano).map(a => a.ano);
+    const selDe = document.getElementById('hallDe'), selAte = document.getElementById('hallAte');
+    const vDe = selDe.value, vAte = selAte.value;
+    const opts = anosDisp.map(a => `<option value="${a}">${a}</option>`).join('');
+    selDe.innerHTML = opts; selAte.innerHTML = opts;
+    selDe.value = anosDisp.includes(Number(vDe)) ? vDe : String(anosDisp[0] ?? '');
+    selAte.value = anosDisp.includes(Number(vAte)) ? vAte : String(anosDisp[anosDisp.length-1] ?? '');
+    desenharEvolucao();
+
+    const dist = Array(11).fill(0);
+    s.todasNotas.forEach(v => dist[Math.max(0, Math.min(10, Math.round(v)))]++);
+    desenhar('chartDist', {
+      type: 'doughnut',
+      data: { labels: dist.map((_, i) => 'Nota ' + i), datasets: [{ data: dist, backgroundColor: CORES_DIST, borderColor: '#17181c', borderWidth: 2 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } }
+    });
+
+    /* heatmap: anos × noites */
+    let hm = '<div class="hm-row"><div class="hm-lbl"></div>' +
+      Array.from({ length: maxN }, (_, i) => `<div class="hm-lbl">N${i+1}</div>`).join('') + '</div>';
+    edicoes.forEach(d => {
+      hm += `<div class="hm-row"><div class="hm-lbl">${d.cfg.ano}</div>`;
+      for(let nn = 1; nn <= maxN; nn++){
+        const x = s.noites.find(v => v.ano === d.cfg.ano && v.noite === nn);
+        hm += x
+          ? `<a class="hm-cell" href="${x.url}" style="background:${corDaNota(x.avg)}" title="Noite ${nn} de ${x.ano}: ${x.avg.toFixed(1)} (${x.n} notas)">${x.avg.toFixed(1)}</a>`
+          : `<div class="hm-cell empty">–</div>`;
+      }
+      hm += '</div>';
+    });
+    document.getElementById('hallHeatmap').innerHTML = hm;
+
+    /* ---- 1. Prateleira dos Campeões ---- */
+    const recsP = [];
+    const goat = topDe(elig, p => p.st.avg);
+    if(goat) recsP.push({ emoji:'🏆', titulo:'A peça mais aclamada da história (GOAT)', texto: fmtP(goat), url: goat.url });
+    const perfeito = topDe(elig.filter(p => p.st.p10 > 0), p => p.st.p10);
+    if(perfeito) recsP.push({ emoji:'💯', titulo:`O "${NOTA_MAXIMA}/${NOTA_MAXIMA}" purista`, texto:`${Math.round(perfeito.st.p10*100)}% dos votos de ${perfeito.titulo} (${perfeito.ano}) foram nota ${NOTA_MAXIMA}`, url: perfeito.url });
+    const pol = topDe(elig.filter(p => p.st.std > 0), p => p.st.std);
+    if(pol) recsP.push({ emoji:'🔥', titulo:'A mais polêmica (dividiu a plateia)', texto:`${fmtP(pol)} — notas de ${pol.st.min.toFixed(1)} a ${pol.st.max.toFixed(1)}`, url: pol.url });
+    const sleepers = [];
+    s.noites.forEach(x => { if(x.pecas.length > 1) x.pecas.forEach(p => { if(p.st.n >= minAv) sleepers.push({ p, margem: p.st.avg - x.avg, noiteAvg: x.avg }); }); });
+    const sl = topDe(sleepers, q => q.margem);
+    if(sl && sl.margem > 0.2) recsP.push({ emoji:'😴', titulo:'O "Sleeper Hit" (maior surpresa)', texto:`${fmtP(sl.p)} superou a média da própria noite (${sl.noiteAvg.toFixed(1)}) em ${sl.margem.toFixed(1)} ponto(s)`, url: sl.p.url });
+    if(elig.length > 1){
+      const cons = topDe(elig, p => p.st.std, false);
+      if(cons) recsP.push({ emoji:'🎯', titulo:'A mais consistente', texto:`${fmtP(cons)} — notas entre ${cons.st.min.toFixed(1)} e ${cons.st.max.toFixed(1)}, quase todo mundo concordou`, url: cons.url });
+    }
+    const fav = topDe(elig.filter(p => p.st.p9 > 0), p => p.st.p9);
+    if(fav) recsP.push({ emoji:'👏', titulo:'Favorita do público', texto:`${Math.round(fav.st.p9*100)}% das notas de ${fav.titulo} (${fav.ano}) foram 9+`, url: fav.url });
+    const maisAv = topDe(comVotos, p => p.st.n);
+    if(maisAv) recsP.push({ emoji:'📊', titulo:'A mais avaliada', texto: fmtP(maisAv), url: maisAv.url });
+    if(elig.length > 1){
+      const pior = topDe(elig, p => p.st.avg, false);
+      recsP.push({ emoji:'🥶', titulo:'A pior avaliada', texto: fmtP(pior), url: pior.url });
+    }
+    const maxInd = topDe(comVotos, p => p.st.max);
+    if(maxInd) recsP.push({ emoji:'🔺', titulo:'Maior nota individual da história', texto:`Alguém deu ${maxInd.st.max.toFixed(1)} para ${maxInd.titulo} (${maxInd.ano})`, url: maxInd.url });
+    const minInd = topDe(comVotos, p => p.st.min, false);
+    if(minInd) recsP.push({ emoji:'🔻', titulo:'Menor nota individual da história', texto:`Alguém deu ${minInd.st.min.toFixed(1)} para ${minInd.titulo} (${minInd.ano})`, url: minInd.url });
+    const perfeitas = comVotos.filter(p => p.st.avg >= NOTA_MAXIMA - 0.05);
+    recsP.push({ emoji:'💎', titulo:'Peças com média perfeita', texto: perfeitas.length
+      ? `${perfeitas.length}: ${perfeitas.map(p => `${p.titulo} (${p.ano})`).join(', ')}`
+      : `Nenhuma média ${NOTA_MAXIMA}.0 ainda${goat ? ` — a mais próxima foi ${goat.titulo} com ${goat.st.avg.toFixed(1)}` : ''}` });
+    let cresc = null;
+    s.noites.forEach(x => {
+      const ord = [...x.pecas].sort((a,b) => a.ep - b.ep);
+      for(let i = 1; i < ord.length; i++){
+        const dd = ord[i].st.avg - ord[i-1].st.avg;
+        if(!cresc || dd > cresc.dd) cresc = { dd, de: ord[i-1], para: ord[i] };
+      }
+    });
+    if(cresc && cresc.dd > 0) recsP.push({ emoji:'📈', titulo:'Maior evolução dentro de uma noite', texto:`De "${cresc.de.titulo}" (${cresc.de.st.avg.toFixed(1)}) para "${cresc.para.titulo}" (${cresc.para.st.avg.toFixed(1)}) — Noite ${cresc.para.noite} de ${cresc.para.ano}`, url: cresc.para.url });
+    preencher('recPecas', recsP);
+
+    /* ---- 2. A Batalha das Noites ---- */
+    const recsN = [];
+    const ouro = topDe(s.noites, x => x.avg);
+    if(ouro) recsN.push({ emoji:'🌙', titulo:'A Noite Ouro (melhor da história)', texto:`Noite ${ouro.noite} de ${ouro.ano} — média ${ouro.avg.toFixed(1)} com ${ouro.n} notas`, url: ouro.url });
+    const comVarias = s.noites.filter(x => x.pecas.length > 1);
+    const caos = topDe(comVarias, x => Math.max(...x.pecas.map(p => p.st.avg)) - Math.min(...x.pecas.map(p => p.st.avg)));
+    if(caos){
+      const diff = Math.max(...caos.pecas.map(p => p.st.avg)) - Math.min(...caos.pecas.map(p => p.st.avg));
+      recsN.push({ emoji:'🎢', titulo:'A Noite do Caos (montanha-russa)', texto:`Noite ${caos.noite} de ${caos.ano} — ${diff.toFixed(1)} pontos entre a melhor e a pior peça do dia`, url: caos.url });
+    }
+    s.anos.forEach(a => {
+      s.noites.filter(x => x.ano === a.ano && x.pecas.length >= 2 && x.pecas.every(p => p.st.avg >= a.avg))
+        .forEach(x => recsN.push({ emoji:'👑', titulo:'Rolo Compressor (Tripla Coroa)', texto:`Noite ${x.noite} de ${x.ano}: todas as peças acima da média do festival (${a.avg.toFixed(1)})`, url: x.url }));
+    });
+    const maratona = topDe(s.noites, x => x.n);
+    if(maratona) recsN.push({ emoji:'🏃', titulo:'O Dia da Maratona (mais votos)', texto:`Noite ${maratona.noite} de ${maratona.ano} — ${maratona.n} notas registradas`, url: maratona.url });
+    preencher('recNoites', recsN);
+
+    /* ---- 3. Linha do Tempo & Edições ---- */
+    const recsE = [];
+    if(melhorAno) recsE.push({ emoji:'🏆', titulo:'O Festival do Ano (Edição Ouro)', texto:`${melhorAno.ano}, com média geral ${melhorAno.avg.toFixed(1)}`, url:`${BASE}${melhorAno.ano}/index.html` });
+    if(rankAnos.length) recsE.push({ emoji:'🏅', titulo:'Ranking das edições', texto: rankAnos.map(a => `${a.ano} (${a.avg.toFixed(1)})`).join(' · ') });
+    let e1s = 0, e1n = 0, eUs = 0, eUn = 0;
+    s.noites.forEach(x => {
+      const ultimoEp = Math.max(...x.pecas.map(q => q.ep));
+      x.pecas.forEach(p => {
+        if(p.ep === 1){ e1s += p.st.avg * p.st.n; e1n += p.st.n; }
+        if(p.ep === ultimoEp && ultimoEp > 1){ eUs += p.st.avg * p.st.n; eUn += p.st.n; }
+      });
+    });
+    if(e1n && eUn) recsE.push({ emoji:'🎬', titulo:'O Efeito Estreia (abertura vs. encerramento)', texto:`Peças que abrem a noite: média ${(e1s/e1n).toFixed(1)} · peças que encerram: média ${(eUs/eUn).toFixed(1)}` });
+    const crescFest = topDe(s.anos.filter(a => a.cresc), a => a.cresc.d);
+    if(crescFest && crescFest.cresc.d > 0) recsE.push({ emoji:'🚀', titulo:'Maior crescimento durante o festival', texto:`${crescFest.ano}: da Noite ${crescFest.cresc.de.noite} (${crescFest.cresc.de.avg.toFixed(1)}) para a Noite ${crescFest.cresc.para.noite} (${crescFest.cresc.para.avg.toFixed(1)})`, url:`${BASE}${crescFest.ano}/index.html` });
+    if(maisPolar) recsE.push({ emoji:'⚡', titulo:'A edição mais polarizada', texto:`${maisPolar.ano} — ${maisPolar.polar.toFixed(1)} pontos entre a peça mais amada e a mais criticada`, url:`${BASE}${maisPolar.ano}/index.html` });
+    const decadas = {};
+    elig.forEach(p => { const dec = Math.floor(p.ano/10)*10; if(!decadas[dec] || p.st.avg > decadas[dec].st.avg) decadas[dec] = p; });
+    Object.keys(decadas).sort().forEach(dec => recsE.push({ emoji:'📆', titulo:`Melhor peça dos anos ${dec}`, texto: fmtP(decadas[dec]), url: decadas[dec].url }));
+    preencher('recEdicoes', recsE);
+
+    /* ---- 4. Números da Comunidade ---- */
+    const recsC = [];
+    recsC.push({ emoji:'🗳️', titulo:'A escala da plateia', texto:`${s.totalVotos} avaliações enviadas, somando ${s.todasNotas.length} notas dadas` });
+    if(mediaHist !== null) recsC.push({ emoji:'📈', titulo:'Média histórica do CETEC', texto:`${mediaHist.toFixed(1)}${anoDest ? ` — a edição ${anoDest.ano} fez ${anoDest.avg.toFixed(1)}` : ''}` });
+    const buckets = {};
+    s.todosSubs.forEach(su => {
+      const dt = new Date(Number(su.ts));
+      if(isNaN(dt.getTime())) return;
+      const k = dt.getDay() + '-' + dt.getHours();
+      buckets[k] = (buckets[k] || 0) + 1;
+    });
+    const pico = Object.entries(buckets).sort((a,b) => b[1]-a[1])[0];
+    if(pico){
+      const dias = ['domingo','segunda','terça','quarta','quinta','sexta','sábado'];
+      const [dw, hh] = pico[0].split('-').map(Number);
+      recsC.push({ emoji:'⏰', titulo:'O horário mais participativo', texto:`O pico de avaliações foi numa ${dias[dw]}, por volta das ${hh}h (${pico[1]} envios nessa faixa)` });
+    }
+    if(comVotos.length){
+      const histApp = s.todasNotas.length / comVotos.length;
+      recsC.push({ emoji:'🧮', titulo:'Média de avaliações por peça', texto:`Histórico: ${histApp.toFixed(1)} notas por peça${anoDest && anoDest.avalPorPeca ? ` · ${anoDest.ano}: ${anoDest.avalPorPeca.toFixed(1)}` : ''}` });
+    }
+    preencher('recComunidade', recsC);
+
+    /* ---- curiosidades manuais (hall-dados.js) ---- */
+    const cur = HALL.curiosidades || [];
+    const sec = document.getElementById('secCurio');
+    if(cur.length){
+      sec.style.display = '';
+      document.getElementById('recCurio').innerHTML = cur.map(rItem).join('');
+    }
+  }
+
+  /* ---------- atualização automática ---------- */
+  async function atualizar(){
+    try{
+      const votos = {};
+      await Promise.all(edicoes.map(async d => {
+        try{
+          /* no-store + _ : fura o cache pra sempre pegar votos frescos */
+          const r = await fetch(API_URL + '?year=' + d.cfg.ano + '&_=' + Date.now(), { cache: 'no-store' });
+          const j = await r.json();
+          votos[d.cfg.ano] = Array.isArray(j) ? j : (j.submissions || []);
+        }catch(e){ votos[d.cfg.ano] = []; }
+      }));
+      stats = calcular(votos);
+      renderTudo();
+      const st = document.getElementById('hallAtualizado');
+      if(st) st.textContent = '· atualizado às ' + new Date().toLocaleTimeString('pt-BR');
+    }catch(e){ console.error('Hall: falha na atualização', e); }
+  }
+
+  await atualizar();
+  setInterval(atualizar, 20000); // atualiza sozinho a cada 20s (igual ao resto do site)
+}
+
 /* ---------------------- dispatcher ---------------------- */
 switch(PAGINA.tipo){
   case 'edicao':   paginaEdicao(); break;
@@ -1037,5 +1817,6 @@ switch(PAGINA.tipo){
   case 'abertura': paginaAbertura(); break;
   case 'noite':    paginaNoite(PAGINA.noite); break;
   case 'monte':    paginaMonte(); break;
+  case 'hall':     paginaHall(); break;
   default: console.error('PAGINA.tipo desconhecido:', PAGINA.tipo);
 }

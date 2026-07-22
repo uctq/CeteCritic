@@ -6,21 +6,23 @@ const MAX_RATING = 10;
 // Mesmo que alguém mude o relógio do próprio celular/PC, o servidor rejeita
 // qualquer voto enviado depois do horário do ano correspondente (fuso -03:00).
 // Ao criar uma edição nova, adicione uma linha aqui (igual ao fimVotacao do edicao.js).
+// Use null para uma votação SEMPRE ABERTA (sem prazo). Ano que não estiver
+// na lista continua bloqueado (proteção contra voto em edição inexistente).
 const FESTIVAL_END_BY_YEAR = {
   2026: new Date('2026-07-18T23:59:00-03:00'),
   2027: new Date('2027-07-17T23:59:00-03:00'),
+  // 2025: null,   // exemplo: edição retrô com votação permanente
 };
 
 // Ano da edição atual. Usado como fallback se o front não mandar o ano.
 const CURRENT_EDITION_YEAR = 2026;
 
-function festivalEnd_(year) {
-  return FESTIVAL_END_BY_YEAR[Number(year)] || null;
-}
 function votingClosed_(year) {
-  const end = festivalEnd_(year);
-  // Ano sem data cadastrada = votação fechada (evita voto em edição inexistente)
-  return end ? new Date() >= end : true;
+  const y = Number(year);
+  if (!(y in FESTIVAL_END_BY_YEAR)) return true; // ano não cadastrado = fechado
+  const end = FESTIVAL_END_BY_YEAR[y];
+  if (end === null) return false;                // null = sempre aberta
+  return new Date() >= end;
 }
 
 function getSheet_() {

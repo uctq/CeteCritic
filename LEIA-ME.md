@@ -58,6 +58,55 @@ votação de 2027. As URLs antigas (`cetecritic.xyz/2026/`) continuam funcionand
 
 Colocar baners nas pastas do ano `poster.jpg` = Poster da edição (630 x 830) / `sobre-banner.jpg` Banner do sobre (1600 x 900)
 
+## Banners de votação (automáticos)
+
+Na página principal da edição, os banners se controlam sozinhos pelas datas:
+
+- Antes do `inicio`: teaser (grade borrada + countdown de abertura).
+- Edição aberta com `fimVotacao` marcado: faixa dourada "As avaliações irão
+  fechar em HH:MM:SS" contando ao vivo.
+- Depois do `fimVotacao`: banner de agradecimento (`mensagemFim` do edicao.js)
+  + countdown para a próxima edição (`abreEm` do config.js).
+
+## Votação sempre aberta (ex: edição retrô)
+
+Quer deixar um ano votando pra sempre (tipo um 2025 retrô)?
+
+1. No `ANO/edicao.js`: `fimVotacao: ''` → o site nunca fecha, sem countdown.
+2. No Apps Script: `2025: null` no `FESTIVAL_END_BY_YEAR` → o servidor aceita
+   votos daquele ano sem prazo. Reimplante depois de editar.
+
+Ano que NÃO estiver no `FESTIVAL_END_BY_YEAR` é bloqueado pelo servidor
+(proteção contra voto em edição inexistente). Resumindo: data = fecha na data,
+`null` = nunca fecha, ausente = já fechado.
+
+## Hall da Fama (hall.html + hall-dados.js)
+
+Tudo do Hall se calcula sozinho a partir dos votos + arquivos das edições, e
+atualiza a cada 20s (tem o carimbo "atualizado às..." no topo). O que é seu
+para editar fica no `hall-dados.js`:
+
+- `minAvaliacoes` — mínimo de votos para rankings/recordes/badges (padrão 3).
+- `edicoesRealizadas` / `publicoEstimado` — dados históricos manuais dos cards.
+- `badgesExtras` — badges manuais (prêmio do júri etc.), template comentado lá.
+- `curiosidades` — itens escritos à mão na lista de recordes.
+
+## Badges
+
+- Automáticas: cada peça leva NO MÁXIMO 1 badge automática por edição — a que
+  mais se encaixa, nesta prioridade: 🥇 campeã → 👏 favorita → 🔥 polêmica →
+  🎯 consistente → 📊 mais avaliada. 📈 "bem recebida" é consolação e também é
+  única: vai só para a peça sem badge com o melhor saldo de elogios vs críticas.
+  Mínimo de avaliações: `minAvaliacoes` do hall-dados.js.
+- ⭐ Melhor episódio da história e as badges manuais (`badgesExtras`) não
+  contam nesse limite — podem aparecer junto.
+- A legenda completa aparece na seção "As Badges" do Hall da Fama.
+
+## Celular
+
+O menu vira uma faixa compacta no topo (logo + botão ☰). Os links só aparecem
+ao tocar no ☰. Nada para configurar.
+
 ## O que foi otimizado além do pedido
 
 - **~973 KB → ~60 KB**: as imagens saíram do HTML (eram base64 embutidas). Agora são
