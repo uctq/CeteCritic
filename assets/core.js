@@ -575,6 +575,7 @@ function paginaEdicao(){
         <div class="title-section">
           <h1>${esc(ED.titulo)}</h1>
           <div class="rating-line">
+            <span class="star">★</span>
             <span class="num" id="overallAvg">–</span>
             <span class="cnt" id="overallCount">0 avaliações</span>
           </div>
@@ -1005,9 +1006,23 @@ function paginaMonte(){
   }
 
   document.getElementById('clearCustomBtn').addEventListener('click', () => {
+    /* notas */
     customValues = {};
     buildCustomGrid();
-    salvarGrid();
+    /* título e descrição de volta ao padrão */
+    titleEl.textContent = `Meu ${ED.titulo}`;
+    descEl.textContent = ED.descricao || 'Clique aqui para escrever sua própria descrição...';
+    descEl.classList.remove('placeholder');
+    /* poster de volta ao padrão do ano */
+    posterBox.classList.remove('has-image');
+    posterInput.value = '';
+    posterImg.removeAttribute('src');
+    posterImg.src = posterPadrao;
+    /* apaga tudo que estava salvo no navegador */
+    ['grid', 'title', 'description', 'poster'].forEach(s => localStorage.removeItem(K(s)));
+    if(ANO === 2026){
+      ['custom-grid', 'custom-title', 'custom-description', 'custom-poster'].forEach(k => localStorage.removeItem(k));
+    }
   });
   document.getElementById('downloadCustomBtn').addEventListener('click', ev =>
     baixarImagem('custom-capture-area', `Meu_Cetec_Festival_${ANO}.png`, ev.currentTarget));
