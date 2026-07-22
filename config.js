@@ -19,14 +19,20 @@ const EDICAO_EM_DESTAQUE = 2026;
                      "faltam X para o próximo festival" do banner final
      monteAbreEm ... (opcional) quando o "Monte o Seu" desse ano libera */
 const EDICOES = [
-  { ano: 2025, noites: 5 },
-  { ano: 2026, noites: 5 },
   { ano: 2027, noites: 5,
     abreEm: '2027-07-12T19:00:00-03:00',
     monteAbreEm: '2027-07-01T00:00:00-03:00' },
-  { ano: 2028, noites: 5,
-    abreEm: '2028-07-10T19:00:00-03:00',
-    monteAbreEm: '2028-07-01T00:00:00-03:00' },
+  { ano: 2026, noites: 5 },
+  { ano: 2025, noites: 5 },
+  { ano: 2024, noites: 5 },
+  { ano: 2023, noites: 5 },
+  { ano: 2022, noites: 5 },
+  { ano: 2021, noites: 5 },
+  { ano: 2020, noites: 5 },
+  
+  //{ ano: 2028, noites: 5,
+  //  abreEm: '2028-07-10T19:00:00-03:00',
+  //  monteAbreEm: '2028-07-01T00:00:00-03:00' },
 ];
 
 /* Planilha (Google Apps Script) que guarda os votos — vale para todos os anos */

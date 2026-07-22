@@ -935,7 +935,7 @@ function paginaNoite(n){
           : `<div class="video-embed-placeholder"><div class="play-icon">▶</div><div>Vídeo da apresentação em breve</div></div>`}
       </div>`;
     });
-    container.innerHTML = html || '<div class="empty-note">Nenhuma apresentação cadastrada para esta noite (adicione em noites/noite-' + n + '.js).</div>';
+    container.innerHTML = html || '<div class="empty-note">Nenhuma apresentação cadastrada para esta noite.</div>';
   }
 
   function atualizarNotas(){
@@ -1198,7 +1198,7 @@ function paginaMonte(){
    PÁGINA: HALL DA FAMA (estatísticas de todas as edições, Chart.js)
    ===================================================================== */
 async function paginaHall(){
-  document.title = 'CETECCritic - Hall da Fama';
+  document.title = 'CETECritic - Hall da Fama';
   montarShell(`
     <div class="noite-intro">
       <h1>Hall da Fama</h1>
@@ -1283,7 +1283,7 @@ async function paginaHall(){
     <div class="section"><h2>🏆 Prateleira dos Campeões</h2><div class="sub">Recordes das peças.</div><div class="record-list" id="recPecas"></div></div>
     <div class="section"><h2>🌙 A Batalha das Noites</h2><div class="sub">Recordes de programação.</div><div class="record-list" id="recNoites"></div></div>
     <div class="section"><h2>📅 Linha do Tempo &amp; Edições</h2><div class="sub">Comparativo entre os anos.</div><div class="record-list" id="recEdicoes"></div></div>
-    <div class="section"><h2>👥 Números da Comunidade</h2><div class="sub">A escala da plateia do CETECCritic.</div><div class="record-list" id="recComunidade"></div></div>
+    <div class="section"><h2>👥 Números da Comunidade</h2><div class="sub">A escala da plateia do CETECritic.</div><div class="record-list" id="recComunidade"></div></div>
     <div class="section" id="secCurio" style="display:none"><h2>🎭 Curiosidades</h2><div class="record-list" id="recCurio"></div></div>`);
 
   if(typeof Chart !== 'undefined'){
