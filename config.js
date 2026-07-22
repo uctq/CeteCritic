@@ -19,6 +19,7 @@ const EDICAO_EM_DESTAQUE = 2026;
                      "faltam X para o próximo festival" do banner final
      monteAbreEm ... (opcional) quando o "Monte o Seu" desse ano libera */
 const EDICOES = [
+  { ano: 2025, noites: 5 },
   { ano: 2026, noites: 5 },
   { ano: 2027, noites: 5,
     abreEm: '2027-07-12T19:00:00-03:00',

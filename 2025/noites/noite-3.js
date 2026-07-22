@@ -1,7 +1,7 @@
 /* ===== NOITE 3 — CETEC FESTIVAL 2027 ===== */
 
 NOITES[3] = {
-  data: '2025-07-14T19:00:00-03:00',
+  data: '2025-07-16T19:00:00-03:00',
   subtitulo: 'Turmas que se apresentaram na terceira noite do festival.',
   pecas: [
   ]
