@@ -10,6 +10,18 @@
    Tipos: 'edicao' | 'sobre' | 'abertura' | 'noite' | 'monte'
    ===================================================================== */
 
+/* ---------------------- Vercel Analytics ----------------------
+   Site estático não precisa do pacote npm: o script oficial é servido
+   pelo próprio Vercel em /_vercel/insights/script.js. Como o core.js
+   roda em toda página, isso cobre o site inteiro. Fora do Vercel
+   (teste local) o script só dá 404 silencioso, sem quebrar nada. */
+(function(){
+  const s = document.createElement('script');
+  s.defer = true;
+  s.src = '/_vercel/insights/script.js';
+  document.head.appendChild(s);
+})();
+
 /* ---------------------- utilidades ---------------------- */
 function esc(str){ const d = document.createElement('div'); d.textContent = str ?? ''; return d.innerHTML; }
 function media(arr){ return (!arr || !arr.length) ? null : arr.reduce((a,b)=>a+b,0)/arr.length; }
