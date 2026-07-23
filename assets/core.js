@@ -195,6 +195,7 @@ function montarShell(conteudo){
       <footer class="site-footer">
         <img class="footer-logo" src="${BASE}assets/logo-rodape.png" alt="" onerror="this.style.display='none'">
         <div>${esc(RODAPE)}</div>
+        <div>Contato e contribuições: <a href="mailto:${(typeof EMAIL_CONTATO !== 'undefined') ? EMAIL_CONTATO : 'cetecritic@gmail.com'}">${(typeof EMAIL_CONTATO !== 'undefined') ? EMAIL_CONTATO : 'cetecritic@gmail.com'}</a></div>
       </footer>
     </div>`);
 
@@ -247,6 +248,33 @@ function montarShell(conteudo){
   });
   window.addEventListener('resize', aplicarEstadoMenu);
   aplicarEstadoMenu();
+
+  /* ---- aviso de edição histórica (anos <= ANO_EDICAO_HISTORICA) ----
+     aparece 1x por sessão para cada ano histórico visitado */
+  const limiteHist = (typeof ANO_EDICAO_HISTORICA !== 'undefined') ? ANO_EDICAO_HISTORICA : 2009;
+  if(ANO && ANO <= limiteHist && !sessionStorage.getItem('aviso-historico-' + ANO)){
+    const emailHist = (typeof EMAIL_CONTATO !== 'undefined') ? EMAIL_CONTATO : 'cetecritic@gmail.com';
+    document.body.insertAdjacentHTML('beforeend', `
+      <div class="modal-overlay open" id="histModalOverlay">
+        <div class="modal-card" style="text-align:center;">
+          <div class="hist-title">Você está entrando em uma edição histórica</div>
+          <div class="hist-text">
+            Edições históricas são festivais antigos (até ${limiteHist}), reconstruídos com o pouco
+            material que sobreviveu ao tempo. Por isso elas têm bem menos dados —
+            podem faltar peças, sinopses, turmas e vídeos.<br><br>
+            Participou dessa época ou guarda programas, fotos ou lembranças?
+            Contribua enviando um e-mail para
+            <a href="mailto:${emailHist}">${emailHist}</a> 💛
+          </div>
+          <button class="btn btn-solid" id="histModalOk">Entendi, quero explorar</button>
+        </div>
+      </div>`);
+    requestAnimationFrame(() => document.getElementById('histModalOverlay').classList.add('show'));
+    document.getElementById('histModalOk').addEventListener('click', () => {
+      sessionStorage.setItem('aviso-historico-' + ANO, '1');
+      fecharOverlay(document.getElementById('histModalOverlay'));
+    });
+  }
 }
 
 function fecharOverlay(el){

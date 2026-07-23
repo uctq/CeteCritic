@@ -84,6 +84,17 @@ body{
   height: 26px; width:auto; display:block; margin: 0 auto 10px auto;
   background: #fff; padding: 6px 12px; border-radius: 6px;
 }
+.site-footer a{ color: var(--gold); text-decoration:none; }
+.site-footer a:hover{ text-decoration:underline; }
+
+/* ---- aviso de edição histórica ---- */
+.hist-title{
+  font-family:'Bebas Neue', sans-serif; font-size: 28px; letter-spacing: 1px;
+  color: var(--gold); line-height: 1.2; margin-bottom: 12px;
+}
+.hist-text{ font-size: 13px; color: var(--text-muted); line-height: 1.7; margin-bottom: 20px; }
+.hist-text a{ color: var(--gold); font-weight: 700; text-decoration:none; }
+.hist-text a:hover{ text-decoration:underline; }
 
 /* ---- pagina de noite (turmas) ---- */
 .noite-card{
