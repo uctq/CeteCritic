@@ -46,6 +46,13 @@ const NOTA_MAXIMA = 10;
    Sem isso, eles apareceriam em todas as edições. */
 const ANO_VOTOS_ANTIGOS = 2026;
 
+/* E-mail de contato (rodapé + aviso das edições históricas) */
+const EMAIL_CONTATO = 'cetecritic@gmail.com';
+
+/* Edições deste ano PARA TRÁS são "históricas": ao entrar nelas aparece um
+   aviso de que há poucos dados e um convite para contribuir por e-mail */
+const ANO_EDICAO_HISTORICA = 2009;
+
 /* Frase de apoio da página inicial (cetecritic.xyz) */
 const SLOGAN_HOME = 'O agregador de notas do CETEC Festival — vote nas peças, acompanhe as médias ao vivo e explore o Hall da Fama.';
 
