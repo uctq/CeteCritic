@@ -3,7 +3,7 @@
    Preencha as peças quando a programação sair (modelo comentado abaixo). */
 
 NOITES[1] = {
-  data: '2023-07-10T:00:00-03:00',
+  data: '2024-07-10T19:00:00-03:00',
   subtitulo: 'Turmas que se apresentaram na primeira noite do festival.',
   pecas: [
       {
