@@ -136,11 +136,14 @@ function filtrarVotosDoAno(lista, ano){
 /* ---------------------- shell (sidebar + rodapé + modais) ---------------------- */
 function htmlSidebar(){
   let h = `<div class="sidebar-logo">
-    <img src="${BASE}assets/logo.png" alt="" onerror="this.style.display='none'">
-    <span>CETEC<br>Critic</span>
+    <a class="sidebar-logo-link" href="${BASE}index.html" title="Ir para o início">
+      <img src="${BASE}assets/logo.png" alt="" onerror="this.style.display='none'">
+      <span>CETEC<br>Critic</span>
+    </a>
     <button class="nav-toggle" id="navToggle" aria-label="Abrir menu">☰</button>
   </div>
   <div class="sidebar-nav" id="sidebarNav">
+  <a class="nav-link nav-parent${PAGINA.tipo === 'home' ? ' active' : ''}" href="${BASE}index.html">Início</a>
   <button class="nav-link nav-parent" id="navMonte">Monte o Seu</button>
   <a class="nav-link nav-parent${PAGINA.tipo === 'hall' ? ' active' : ''}" href="${BASE}hall.html">Hall da Fama</a>`;
 
@@ -204,10 +207,46 @@ function montarShell(conteudo){
   document.getElementById('monteModalClose').addEventListener('click', () => fecharOverlay(mo));
   mo.addEventListener('click', ev => { if(ev.target === mo) fecharOverlay(mo); });
 
-  /* menu retrátil no celular */
+  /* menu retrátil no celular — controla a visibilidade direto no elemento,
+     então funciona mesmo se o CSS estiver em cache antigo no navegador */
   const navToggle = document.getElementById('navToggle');
-  if(navToggle) navToggle.addEventListener('click', () =>
-    document.querySelector('.sidebar').classList.toggle('nav-open'));
+  const sidebarEl = document.querySelector('.sidebar');
+  const sidebarNavEl = document.getElementById('sidebarNav');
+  const ehCelular = () => window.matchMedia('(max-width: 860px)').matches;
+
+  function aplicarEstadoMenu(){
+    if(!sidebarNavEl) return;
+    if(ehCelular()){
+      const aberto = sidebarEl.classList.contains('nav-open');
+      sidebarNavEl.style.display = aberto ? 'flex' : 'none';
+      sidebarNavEl.style.flexDirection = 'column';
+      sidebarNavEl.style.marginTop = aberto ? '12px' : '';
+      if(navToggle) navToggle.textContent = aberto ? '✕' : '☰';
+    } else {
+      sidebarNavEl.style.display = '';
+      sidebarNavEl.style.marginTop = '';
+      sidebarEl.classList.remove('nav-open');
+      if(navToggle) navToggle.textContent = '☰';
+    }
+  }
+  if(navToggle) navToggle.addEventListener('click', () => {
+    sidebarEl.classList.toggle('nav-open');
+    aplicarEstadoMenu();
+  });
+  /* tocar em qualquer item do menu já fecha ele na hora */
+  if(sidebarNavEl) sidebarNavEl.addEventListener('click', ev => {
+    if(ehCelular() && ev.target.closest('a, button')){
+      sidebarEl.classList.remove('nav-open');
+      aplicarEstadoMenu();
+    }
+  });
+  /* página restaurada do histórico (botão voltar do celular) volta com menu fechado */
+  window.addEventListener('pageshow', () => {
+    sidebarEl.classList.remove('nav-open');
+    aplicarEstadoMenu();
+  });
+  window.addEventListener('resize', aplicarEstadoMenu);
+  aplicarEstadoMenu();
 }
 
 function fecharOverlay(el){
@@ -931,11 +970,11 @@ function paginaNoite(n){
         </div>
         <div class="noite-card-synopsis">${esc(info.sinopse)}</div>
         ${info.youtube
-          ? `<iframe class="video-embed-placeholder" src="https://www.youtube.com/embed/${esc(info.youtube)}${info.youtubeInicio ? `?start=${Number(info.youtubeInicio)}` : ''}" title="${esc(info.titulo)}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>`
+          ? `<iframe class="video-embed-placeholder" src="https://www.youtube.com/embed/${esc(info.youtube)}${info.youtubeInicio ? `?start=${Number(info.youtubeInicio)}` : ''}" title="${esc(info.titulo)}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>${!info.youtubeInicio ? `<div class="noite-card-turma" style="font-style:italic; margin-top:8px;">(Esta apresentação ainda não foi sincronizada com o video)</div>` : ''}`
           : `<div class="video-embed-placeholder"><div class="play-icon">▶</div><div>Vídeo da apresentação em breve</div></div>`}
       </div>`;
     });
-    container.innerHTML = html || '<div class="empty-note">Nenhuma apresentação cadastrada para esta noite.</div>';
+    container.innerHTML = html || '<div class="empty-note">Nenhuma apresentação cadastrada para esta noite (adicione em noites/noite-' + n + '.js).</div>';
   }
 
   function atualizarNotas(){
@@ -1333,6 +1372,7 @@ async function paginaHall(){
   });
 
   let stats = null;
+  let curioTimer = null;
   let filtroPecas = 'all';
   let filtroNoites = 'all';
   let comparaCom = 'hist';
@@ -1805,12 +1845,28 @@ async function paginaHall(){
     }
     preencher('recComunidade', recsC);
 
-    /* ---- curiosidades manuais (hall-dados.js) ---- */
+    /* ---- curiosidades manuais (hall-dados.js) ----
+       mais de 5 cadastradas: mostra 5 sorteadas por vez, trocando a cada 8s */
     const cur = HALL.curiosidades || [];
     const sec = document.getElementById('secCurio');
     if(cur.length){
       sec.style.display = '';
-      document.getElementById('recCurio').innerHTML = cur.map(rItem).join('');
+      const alvo = document.getElementById('recCurio');
+      const POR_VEZ = 5;
+      if(curioTimer){ clearInterval(curioTimer); curioTimer = null; }
+      if(cur.length <= POR_VEZ){
+        alvo.innerHTML = cur.map(rItem).join('');
+      } else {
+        const sortear = () => {
+          const escolhidas = [...cur].sort(() => Math.random() - 0.5).slice(0, POR_VEZ);
+          alvo.classList.remove('curio-fade');
+          void alvo.offsetWidth; /* reinicia a animação */
+          alvo.classList.add('curio-fade');
+          alvo.innerHTML = escolhidas.map(rItem).join('');
+        };
+        sortear();
+        curioTimer = setInterval(sortear, 8000);
+      }
     }
   }
 
@@ -1837,6 +1893,255 @@ async function paginaHall(){
   setInterval(atualizar, 20000); // atualiza sozinho a cada 20s (igual ao resto do site)
 }
 
+/* =====================================================================
+   PÁGINA: INÍCIO (homepage oficial — cetecritic.xyz)
+   Engloba a edição em destaque (EDICAO_EM_DESTAQUE do config.js).
+   ===================================================================== */
+async function paginaHome(){
+  document.title = 'CETECritic';
+  const slogan = (typeof SLOGAN_HOME !== 'undefined') ? SLOGAN_HOME : 'O agregador de notas do CETEC Festival.';
+  const pastaDest = `${EDICAO_EM_DESTAQUE}/`;
+
+  /* countdown grandão: começo da edição → fim da votação → próxima edição */
+  let cdLabel = '', cdTarget = null, cdExtra = '';
+  if(ED && !edicaoComecou() && inicioEdicao()){
+    cdLabel = `O ${ED.titulo} começa em`;
+    cdTarget = inicioEdicao();
+  } else if(ED && !votacaoEncerrada() && FIM_VOTACAO){
+    cdLabel = 'Votação aberta! As avaliações fecham em';
+    cdTarget = FIM_VOTACAO;
+  } else {
+    const prox = EDICOES
+      .map(e => ({ ano: e.ano, d: e.abreEm ? new Date(e.abreEm) : null }))
+      .filter(e => e.d && !isNaN(e.d) && e.d > agora())
+      .sort((a,b) => a.d - b.d)[0];
+    if(prox){ cdLabel = `Faltam para o CETEC Festival ${prox.ano}`; cdTarget = prox.d; }
+    else cdExtra = 'Obrigado a todos que participaram — até a próxima edição! 🎭';
+  }
+
+  /* dados manuais da home (home-dados.js) */
+  const HD = (typeof HOME_DADOS !== 'undefined') ? HOME_DADOS : {};
+  const hoje = new Date();
+
+  /* "nesse dia na história" — só aparece se houver algo para hoje */
+  const doDia = (HD.nesteDia || []).filter(x => Number(x.dia) === hoje.getDate() && Number(x.mes) === (hoje.getMonth() + 1));
+  const htmlNesteDia = doDia.length ? `
+    <div class="section">
+      <h2>📅 Nesse dia na história do festival</h2>
+      <div class="record-list">${doDia.map(x => {
+        const inner = `<span class="rec-emoji">${x.emoji || '🎞️'}</span><div><div class="rec-text" style="font-size:13px; color:var(--text);">${esc(x.texto)}</div></div>`;
+        return x.url ? `<a class="record-item" href="${x.url}">${inner}</a>` : `<div class="record-item">${inner}</div>`;
+      }).join('')}</div>
+    </div>` : '';
+
+  /* linha do tempo: anos do home-dados.js + edições do config.js */
+  const notasTl = HD.linhaDoTempo || {};
+  const anosTl = [...new Set([...Object.keys(notasTl).map(Number), ...EDICOES.map(e => e.ano)])].sort((a,b) => a - b);
+  let htmlTl = '';
+  anosTl.forEach((ano, i) => {
+    if(i > 0 && ano - anosTl[i-1] > 1)
+      htmlTl += `<div class="tl-item gap"><div class="tl-year"></div><div class="tl-line"><div class="tl-dot"></div></div><div class="tl-text tl-sub">···</div></div>`;
+    const cfgE = EDICOES.find(e => e.ano === ano);
+    const futura = cfgE && cfgE.abreEm && new Date(cfgE.abreEm) > agora();
+    const nome = cfgE ? `<a href="${BASE}${ano}/index.html">Cetec Festival ${ano}</a>` : '';
+    const nota = notasTl[ano] ? esc(notasTl[ano]) : (futura ? 'Em produção...' : '');
+    htmlTl += `<div class="tl-item">
+      <div class="tl-year">${ano}</div>
+      <div class="tl-line"><div class="tl-dot"></div></div>
+      <div class="tl-text">${nome}${nome && nota ? `<div class="tl-sub">${nota}</div>` : nota}</div>
+    </div>`;
+  });
+
+  montarShell(`
+    <div class="home-hero">
+      <div class="poster-box has-image home-poster">
+        <img src="${pastaDest}${esc((ED && ED.poster) || 'poster.jpg')}" alt="Poster da edição" onerror="this.closest('.poster-box').classList.remove('has-image')">
+        <div class="poster-hint"><b>poster.jpg</b>Capa da edição em destaque</div>
+      </div>
+      <div class="home-info">
+        <h1 class="home-title">CETEC<span>Critic</span></h1>
+        <p class="home-tagline">${esc(slogan)}</p>
+        <div class="home-actions">
+          <a class="btn btn-solid" href="${pastaDest}index.html">${ED && edicaoComecou() && !votacaoEncerrada() ? '⭐ Votar agora' : `Ver ${esc(ED ? ED.titulo : 'a edição em destaque')}`}</a>
+          <a class="btn btn-ghost" href="hall.html">🏆 Hall da Fama</a>
+          <button class="btn btn-ghost" id="homeMonteBtn">🎨 Monte o Seu</button>
+          <button class="btn btn-ghost" id="shareBtn">📤 Compartilhar</button>
+        </div>
+      </div>
+    </div>
+
+    ${cdTarget ? `<div class="section home-countdown">
+      <div class="lbl">${esc(cdLabel)}</div>
+      <div class="big-timer" data-count-to="${cdTarget.toISOString()}" data-reload="1">--:--:--</div>
+    </div>` : (cdExtra ? `<div class="section home-countdown"><div class="lbl">${esc(cdExtra)}</div></div>` : '')}
+
+    <div class="hall-cards" id="homeStats"></div>
+
+    ${htmlNesteDia}
+
+    <div class="section">
+      <h2>🎭 Hoje recomendamos</h2>
+      <div class="sub">Uma peça escolhida por dia — assista e deixe a sua nota.</div>
+      <div class="record-list" id="homeRecomenda"><div class="empty-note">Carregando...</div></div>
+    </div>
+
+    <div class="section">
+      <h2>🏆 Destaques do ${ED ? ED.ano : ''}</h2>
+      <div class="sub">As peças mais bem avaliadas da edição em destaque — atualiza sozinho. Clique para abrir.</div>
+      <div class="record-list" id="homeTop"><div class="empty-note">Carregando...</div></div>
+    </div>
+
+    <div class="section">
+      <h2>💡 Curiosidades</h2>
+      <div class="sub">Descubra mais sobre o maior festival de teatro estudantil do Rio GRande do Sul.</div>
+      <div class="record-list" id="homeCurio"><div class="empty-note">Carregando...</div></div>
+    </div>
+
+    <div class="section">
+      <h2>🗓️ Linha do tempo</h2>
+      <div class="sub">A história do CETEC Festival, ano a ano.</div>
+      <div class="timeline">${htmlTl}</div>
+    </div>`);
+
+  /* botão "Monte o Seu" do hero: abre o mesmo seletor de ano do menu */
+  const homeMonteBtn = document.getElementById('homeMonteBtn');
+  if(homeMonteBtn) homeMonteBtn.addEventListener('click', () => {
+    const mo = document.getElementById('monteModalOverlay');
+    mo.classList.add('open');
+    requestAnimationFrame(() => mo.classList.add('show'));
+  });
+
+  /* botão compartilhar: Web Share no celular, copiar link no desktop
+     (o link já vai bonito no WhatsApp/Instagram pelas tags Open Graph do index.html) */
+  const shareBtn = document.getElementById('shareBtn');
+  if(shareBtn) shareBtn.addEventListener('click', async () => {
+    const dados = { title: 'CETECritic', text: slogan, url: location.href };
+    if(navigator.share){
+      try{ await navigator.share(dados); }catch(e){ /* usuário cancelou */ }
+    } else {
+      try{
+        await navigator.clipboard.writeText(dados.url);
+        const orig = shareBtn.textContent;
+        shareBtn.textContent = '✓ Link copiado!';
+        setTimeout(() => { shareBtn.textContent = orig; }, 1600);
+      }catch(e){ prompt('Copie o link:', dados.url); }
+    }
+  });
+
+  async function atualizarHome(){
+    await fetchVotos(); /* votos da edição em destaque (sincroniza o relógio também) */
+
+    /* demais edições, só para os números históricos */
+    const outros = await Promise.all(EDICOES.filter(e => e.ano !== ANO).map(async e => {
+      try{
+        const r = await fetch(API_URL + '?year=' + e.ano + '&_=' + Date.now(), { cache: 'no-store' });
+        const j = await r.json();
+        return { ano: e.ano, subs: filtrarVotosDoAno(Array.isArray(j) ? j : (j.submissions || []), e.ano) };
+      }catch(err){ return { ano: e.ano, subs: [] }; }
+    }));
+
+    const notasDest = [];
+    submissions.forEach(s => Object.values(s.grid).forEach(v => { const x = Number(v); if(!isNaN(x)) notasDest.push(x); }));
+    const todasNotas = [...notasDest];
+    let totalVotos = submissions.length;
+    outros.forEach(o => {
+      totalVotos += o.subs.length;
+      o.subs.forEach(s => Object.values(s.grid).forEach(v => { const x = Number(v); if(!isNaN(x)) todasNotas.push(x); }));
+    });
+
+    const mediaDest = media(notasDest);
+    const mediaHist = media(todasNotas);
+    const cards = [
+      { big: mediaDest === null ? '–' : mediaDest.toFixed(1), lbl: `Nota do ${ANO}`, sub: `${submissions.length} avaliaç${submissions.length === 1 ? 'ão' : 'ões'}` },
+      { big: String(totalVotos), lbl: 'Avaliações na história' },
+      { big: mediaHist === null ? '–' : mediaHist.toFixed(1), lbl: 'Média histórica' },
+      { big: String(EDICOES.length), lbl: 'Edições no site' }
+    ];
+    const el = document.getElementById('homeStats');
+    if(el) el.innerHTML = cards.map(c =>
+      `<div class="hall-card"><div class="big">${c.big}</div><div class="lbl">${c.lbl}</div>${c.sub ? `<div class="subtxt">${c.sub}</div>` : ''}</div>`).join('');
+
+    /* top 3 da edição em destaque (só noites já liberadas — sem spoiler) */
+    const lista = [];
+    for(let n = 1; n <= NUM_NOITES; n++){
+      const nd = ND[n];
+      if(!nd || !(nd.pecas || []).length || !noiteLiberada(n)) continue;
+      nd.pecas.forEach((p, i) => {
+        const key = `s${n}e${i+1}`;
+        const vals = valoresDaChave(key).map(Number).filter(v => !isNaN(v));
+        const st = statsDeVals(vals);
+        if(st) lista.push({ key, titulo: p.titulo, turma: p.turma, sinopse: p.sinopse || '', noite: n, st, url: `${pastaDest}noite-${n}.html` });
+      });
+    }
+    const medalhas = ['🥇','🥈','🥉'];
+    const top3 = lista.sort((a,b) => b.st.avg - a.st.avg || b.st.n - a.st.n).slice(0, 3);
+    const elT = document.getElementById('homeTop');
+    if(elT) elT.innerHTML = top3.length
+      ? top3.map((p, i) => `<a class="record-item" href="${p.url}">
+          <span class="rec-emoji">${medalhas[i]}</span>
+          <div><div class="rec-title">${esc(p.titulo)} — nota ${p.st.avg.toFixed(1)}</div>
+          <div class="rec-text">Turma ${esc(p.turma)} · Noite ${p.noite} · ${p.st.n} avaliaç${p.st.n === 1 ? 'ão' : 'ões'}</div></div>
+        </a>`).join('')
+      : '<div class="empty-note">Os destaques aparecem aqui assim que os primeiros votos chegarem.</div>';
+
+    /* ---- hoje recomendamos: 1 peça por dia (prioriza quem tem badge) ---- */
+    const bmap = badgesDoAno(submissions);
+    const comBadge = lista.filter(p => (bmap[p.key] || []).length);
+    const pool = comBadge.length ? comBadge : lista;
+    const elR = document.getElementById('homeRecomenda');
+    if(elR){
+      if(pool.length){
+        const diaAno = Math.floor((hoje - new Date(hoje.getFullYear(), 0, 0)) / 86400000);
+        const p = pool[diaAno % pool.length]; /* muda todo dia, igual pra todo mundo */
+        elR.innerHTML = `<a class="record-item" href="${p.url}">
+          <span class="rec-emoji">🎭</span>
+          <div><div class="rec-title">${esc(p.titulo)} <span class="peca-badges">${htmlBadges(bmap[p.key])}</span> — nota ${p.st.avg.toFixed(1)}</div>
+          <div class="rec-text">Turma ${esc(p.turma)} · Noite ${p.noite}${p.sinopse ? ' — ' + esc(p.sinopse.slice(0, 150)) + (p.sinopse.length > 150 ? '…' : '') : ''}</div></div>
+        </a>`;
+      } else {
+        elR.innerHTML = '<div class="empty-note">A recomendação aparece quando houver peças com votos.</div>';
+      }
+    }
+
+    /* ---- curiosidades: manuais (home-dados.js) + automáticas ---- */
+    const autoCurio = [];
+    const anosAvg = [{ ano: ANO, avg: mediaDest, n: notasDest.length }];
+    outros.forEach(o => {
+      const vals = [];
+      o.subs.forEach(s => Object.values(s.grid).forEach(v => { const x = Number(v); if(!isNaN(x)) vals.push(x); }));
+      if(vals.length) anosAvg.push({ ano: o.ano, avg: media(vals), n: vals.length });
+    });
+    const comMedia = anosAvg.filter(a => a.avg !== null && a.n > 0);
+    if(comMedia.length > 1){
+      const best = comMedia.reduce((a, b) => b.avg > a.avg ? b : a);
+      autoCurio.push(`O Festival de ${best.ano} tem a maior média da história (${best.avg.toFixed(1)}).`);
+    }
+    if(lista.length > 1){
+      const ord = [...lista].sort((a, b) => b.st.avg - a.st.avg);
+      autoCurio.push(`A diferença entre a primeira e a última colocada em ${ANO} é de ${(ord[0].st.avg - ord[ord.length-1].st.avg).toFixed(1)} ponto(s).`);
+    }
+    const n10 = todasNotas.filter(v => v >= NOTA_MAXIMA - 0.01).length;
+    if(n10 > 0) autoCurio.push(`Já foram dadas ${n10} nota(s) ${NOTA_MAXIMA} na história do site.`);
+    const acima9 = lista.filter(p => p.st.avg >= 9).length;
+    if(acima9 > 0) autoCurio.push(`${acima9} peça(s) de ${ANO} ${acima9 === 1 ? 'tem' : 'têm'} média 9 ou mais.`);
+    if(totalVotos > 0) autoCurio.push(`A plateia já enviou ${totalVotos} avaliaç${totalVotos === 1 ? 'ão' : 'ões'}, somando ${todasNotas.length} notas.`);
+
+    const curios = [
+      ...((HD.curiosidades || []).map(c => typeof c === 'string' ? { texto: c } : c)),
+      ...autoCurio.map(t => ({ texto: t }))
+    ];
+    const elC = document.getElementById('homeCurio');
+    if(elC) elC.innerHTML = curios.length
+      ? curios.map(c => {
+          const inner = `<span class="rec-emoji">${c.emoji || '💡'}</span><div><div class="rec-text" style="color:var(--text); font-size:13px;">${esc(c.texto)}</div></div>`;
+          return c.url ? `<a class="record-item" href="${c.url}">${inner}</a>` : `<div class="record-item">${inner}</div>`;
+        }).join('')
+      : '<div class="empty-note">Adicione curiosidades no home-dados.js.</div>';
+  }
+  atualizarHome();
+  setInterval(atualizarHome, 20000);
+}
+
 /* ---------------------- dispatcher ---------------------- */
 switch(PAGINA.tipo){
   case 'edicao':   paginaEdicao(); break;
@@ -1845,5 +2150,6 @@ switch(PAGINA.tipo){
   case 'noite':    paginaNoite(PAGINA.noite); break;
   case 'monte':    paginaMonte(); break;
   case 'hall':     paginaHall(); break;
+  case 'home':     paginaHome(); break;
   default: console.error('PAGINA.tipo desconhecido:', PAGINA.tipo);
 }

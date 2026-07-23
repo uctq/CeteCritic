@@ -31,6 +31,9 @@ const HALL = {
   /* ---- curiosidades escritas à mão (entram no fim da lista de recordes) ---- */
   curiosidades: [
     // { emoji: '🎭', titulo: 'Título da curiosidade', texto: 'Descrição...' },
+    { emoji: '🗓️', titulo: 'Cetec Festival Adiado', texto: 'O Cetec Festival de 2021 foi realizado em outubro, devido pandêmia de COVID-19 na época' },
+    { emoji: '📽️', titulo: 'Cetec Festival Transmitido', texto: 'Devido a pandêmia o Cetec Festival de 2020 foi o primeiro a ser transmitido ao vivo no Youtube e Facebook' },
+    { emoji: '📹', titulo: 'Cetec Festival Gravado', texto: 'O Cetec Festival de 2020 foi a primeira, e até o momentoa unica, edição onde as peças foram exibidas gravadas devido a pandemia' },
     // { emoji: '🏛️', titulo: 'Com link', texto: 'Descrição...', url: '2026/noite-1.html' },
   ]
 };

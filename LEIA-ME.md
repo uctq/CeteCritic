@@ -1,4 +1,4 @@
-# CETECCritic — Site reestruturado
+# CETECritic — Site reestruturado
 
 O site que era 1 arquivo gigante virou uma estrutura em pastas, uma por ano.
 Tudo que muda "toda hora" fica no topo de 3 tipos de arquivo — o resto você nunca precisa tocar.
@@ -14,7 +14,7 @@ cetecritic/
 │   ├── estilo.css          ← visual (não precisa mexer)
 │   ├── core.js             ← lógica (não precisa mexer)
 │   ├── logo.png            ← ⚠️ ADICIONE: logo da sidebar (o "C" laranja)
-│   ├── logo-rodape.png     ← ⚠️ ADICIONE: logo do rodapé (CETECCritic branco)
+│   ├── logo-rodape.png     ← ⚠️ ADICIONE: logo do rodapé (CETECritic branco)
 │   └── favicon.png         ← ⚠️ ADICIONE: ícone da aba
 ├── 2026/
 │   ├── edicao.js           ← ⭐ título, descrição, datas, textos Sobre/Abertura

@@ -28,7 +28,7 @@ const EDICOES = [
   { ano: 2023, noites: 5 },
   { ano: 2022, noites: 5 },
   { ano: 2021, noites: 5 },
-  { ano: 2020, noites: 5 },
+  { ano: 2020, noites: 3 },
   
   //{ ano: 2028, noites: 5,
   //  abreEm: '2028-07-10T19:00:00-03:00',
@@ -45,6 +45,9 @@ const NOTA_MAXIMA = 10;
    edição (os primeiros votos de 2026 foram salvos antes da coluna existir).
    Sem isso, eles apareceriam em todas as edições. */
 const ANO_VOTOS_ANTIGOS = 2026;
+
+/* Frase de apoio da página inicial (cetecritic.xyz) */
+const SLOGAN_HOME = 'O agregador de notas do CETEC Festival — vote nas peças, acompanhe as médias ao vivo e explore o Hall da Fama.';
 
 /* Tempo mínimo entre envios de avaliação (anti-spam), em minutos */
 const COOLDOWN_MINUTOS = 5;

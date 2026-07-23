@@ -9,9 +9,14 @@ const MAX_RATING = 10;
 // Use null para uma votação SEMPRE ABERTA (sem prazo). Ano que não estiver
 // na lista continua bloqueado (proteção contra voto em edição inexistente).
 const FESTIVAL_END_BY_YEAR = {
-  2026: new Date('2026-07-18T23:59:00-03:00'),
   2027: new Date('2027-07-17T23:59:00-03:00'),
-  // 2025: null,   // exemplo: edição retrô com votação permanente
+  2026: new Date('2026-07-18T23:59:00-03:00'),
+  2025: null,
+  2024: null,
+  2023: null,
+  2022: null,
+  2021: null,
+  2020: null,  // exemplo: edição retrô com votação permanente
 };
 
 // Ano da edição atual. Usado como fallback se o front não mandar o ano.
