@@ -10,9 +10,46 @@ const HALL = {
      badges (evita que 1 voto solitário de 10.0 vire "a melhor da história") */
   minAvaliacoes: 3,
 
+  /* ---- ORDEM das seções do Hall da Fama ----
+     Liste as chaves na ordem que você quer que apareçam na página.
+     Chave que você não citar aqui aparece no final, na ordem padrão — então
+     não precisa listar todas, só as que você quer mover para cima/baixo.
+     Chaves disponíveis:
+       badges              → 🏅 As Badges (legenda)
+       topPecas            → 🏆 Top Peças (gráfico)
+       topNoites           → 🌙 Top Noites (gráfico)
+       topFestivais        → 🏅 Top Festivais (gráfico)
+       mediaTurmas         → 🎓 Média histórica por turma
+       comparacaoDestaque  → ⚖️ edição em destaque vs. história
+       compararEdicoes     → 🆚 Comparar edições (dois seletores)
+       evolucao            → 📈 Evolução do festival
+       distribuicao        → 🍩 Distribuição das notas
+       heatmap             → 🗓️ Notas por noite ao longo dos anos
+       recPecas            → 🏆 Prateleira dos Campeões
+       recNoites           → 🌙 A Batalha das Noites
+       recEdicoes          → 📅 Linha do Tempo & Edições
+       recComunidade       → 👥 Números da Comunidade
+       rankUsuarios        → 👤 Ranking de usuários (top avaliadores, presença, streak, bolão)
+       topReputacao        → 👑 Maiores reputações (top usuários por reputação + cargo)
+       curiosidades        → 🎭 Curiosidades
+     Exemplo: colocar o ranking de usuários e as curiosidades logo no topo:
+       ordemSecoes: ['rankUsuarios', 'curiosidades'], */
+  ordemSecoes: [
+    'badges', 'topPecas', 'topNoites', 'rankUsuarios', 'topReputacao', 'topFestivais', 'mediaTurmas', 'comparacaoDestaque',
+    'compararEdicoes', 'evolucao', 'distribuicao', 'heatmap',
+    'recPecas', 'recNoites', 'recEdicoes', 'recComunidade', 'curiosidades'
+  ],
+
+  /* ---- QUANTIDADE de itens ("quadrados"/barras/linhas) em cada ranking ---- */
+  contagens: {
+    topPecas: 10,       // barras do gráfico "Top Peças"
+    topNoites: 10,       // barras do gráfico "Top Noites"
+    rankUsuarios: 10     // linhas de cada coluna do "Ranking de usuários"
+  },
+
   /* ---- dados manuais (deixe '' para esconder o card) ---- */
-  edicoesRealizadas: '',   // ex: '32 edições (1995–2026)'
-  publicoEstimado: '',     // ex: '15 mil pessoas'
+  edicoesRealizadas: '31',   // ex: '32 edições (1995–2026)'
+  publicoEstimado: '≈ 96 mil',     // ex: '15 mil pessoas'
 
   /* ---- BADGES EXTRAS (manuais) ----
      Medalhas que VOCÊ dá para uma peça específica. Aparecem ao lado do

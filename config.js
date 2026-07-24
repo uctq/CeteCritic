@@ -17,7 +17,14 @@ const EDICAO_EM_DESTAQUE = 2026;
      noites ........ quantas noites aparecem no menu e na grade
      abreEm ........ (opcional) data da 1ª noite — usada no countdown
                      "faltam X para o próximo festival" do banner final
-     monteAbreEm ... (opcional) quando o "Monte o Seu" desse ano libera */
+     monteAbreEm ... (opcional) quando o "Monte o Seu" desse ano libera
+     emBreve ....... (opcional) true = a edição vira só um aviso "Em breve"
+                     (SEM countdown). NÃO precisa criar pasta do ano: o menu
+                     manda para uma página compartilhada (em-breve.html).
+                     Ideal para anos retrô/futuros que ainda não têm conteúdo.
+
+   O menu lateral agrupa as edições por década automaticamente — não precisa
+   fazer nada, basta a linha do ano estar aqui. */
 const EDICOES = [
   { ano: 2027, noites: 5,
     abreEm: '2027-07-12T19:00:00-03:00',
@@ -29,7 +36,34 @@ const EDICOES = [
   { ano: 2022, noites: 5 },
   { ano: 2021, noites: 5 },
   { ano: 2020, noites: 3 },
-  
+  { ano: 2019, noites: 4 },
+  { ano: 2018, noites: 4, emBreve: true },
+  { ano: 2017, noites: 4, emBreve: true  },
+  { ano: 2016, noites: 4, emBreve: true  },
+  { ano: 2015, noites: 4, emBreve: true  },
+  { ano: 2014, noites: 4, emBreve: true  },
+  { ano: 2013, noites: 4, emBreve: true  },
+  { ano: 2012, noites: 4, emBreve: true  },
+  { ano: 2011, noites: 4, emBreve: true  },
+  { ano: 2010, noites: 4, emBreve: true  },
+  { ano: 2009, noites: 4, emBreve: true  },
+  { ano: 2008, noites: 4, emBreve: true  },
+  { ano: 2007, noites: 4, emBreve: true  },
+  { ano: 2006, noites: 4, emBreve: true  },
+  { ano: 2005, noites: 4, emBreve: true  },
+  { ano: 2004, noites: 4, emBreve: true  },
+  { ano: 2003, noites: 4, emBreve: true  },
+  { ano: 2002, noites: 4, emBreve: true  },
+  { ano: 2001, noites: 4, emBreve: true  },
+  { ano: 2000, noites: 4, emBreve: true  },
+  { ano: 1999, noites: 4, emBreve: true  },
+  { ano: 1998, noites: 4, emBreve: true  },
+  { ano: 1997, noites: 4, emBreve: true  }
+
+  /* Exemplo de ano futuro sem data ainda: aparece como "Em breve", sem contador.
+     Copie a pasta de um ano, ajuste os arquivos e descomente a linha abaixo. */
+  //{ ano: 2028, noites: 5, emBreve: true },
+
   //{ ano: 2028, noites: 5,
   //  abreEm: '2028-07-10T19:00:00-03:00',
   //  monteAbreEm: '2028-07-01T00:00:00-03:00' },
@@ -54,7 +88,7 @@ const EMAIL_CONTATO = 'cetecritic@gmail.com';
 const ANO_EDICAO_HISTORICA = 2009;
 
 /* Frase de apoio da página inicial (cetecritic.xyz) */
-const SLOGAN_HOME = 'O agregador de notas do CETEC Festival — vote nas peças, acompanhe as médias ao vivo e explore o Hall da Fama.';
+const SLOGAN_HOME = 'O Cetec Festival na palma da sua mão: vote nas peças, acompanhe as médias ao vivo, compare edições e explore a história do maior festival estudantil do sul do pais.';
 
 /* Tempo mínimo entre envios de avaliação (anti-spam), em minutos */
 const COOLDOWN_MINUTOS = 5;

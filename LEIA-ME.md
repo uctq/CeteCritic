@@ -49,10 +49,119 @@ cetecritic/
 6. Noite extra? Copie `noite-5.html` + `noites/noite-5.js`, troque o número, e aumente
    `noites:` no `config.js`. Grade, menu e cadeados se ajustam sozinhos.
 
+O menu lateral **agrupa as edições por década sozinho** (Anos 2020, Anos 2010...).
+A década do ano que você está vendo já abre expandida; as outras ficam recolhidas.
+Não precisa configurar nada — só adicionar a linha do ano no `config.js`.
+
+## Ano retrô ou futuro ainda sem conteúdo ("Em breve")
+
+Quer que um ano apareça no site como **"Em breve"**, sem countdown e **sem precisar
+criar a pasta do ano**? Basta a linha no `config.js` com `emBreve: true`:
+
+`{ ano: 1998, noites: 4, emBreve: true }`
+
+O menu mostra o ano com a etiqueta *em breve* e manda para uma página
+compartilhada (`em-breve.html?ano=1998`) — nenhuma pasta `1998/` é necessária.
+Dá pra cadastrar quantos anos quiser assim, só com a linha na config.
+
+Quando for montar a edição de verdade: crie a pasta do ano (copiando outra),
+ajuste o `edicao.js` (principalmente o `ano:`) e as noites, e **remova o
+`emBreve: true`** (ou troque por `abreEm: '...'` se for uma edição futura com
+data). Aí o menu volta a apontar para a pasta do ano com as subpáginas.
+
+⚠️ Importante: se você deixar `emBreve: true` numa edição, o menu **ignora a pasta
+daquele ano** e usa a página compartilhada. Foi isso que causava o desvio para
+"Cetec Festival 2027": as pastas 2015–2018 eram cópias da 2027 (com `ano: 2027`
+lá dentro), então o site lia "2027". Com `emBreve`, isso não acontece mais.
+
 ## Trocar a votação em destaque
 
 `config.js` → `EDICAO_EM_DESTAQUE = 2027;` — pronto. Quem abrir cetecritic.xyz cai na
 votação de 2027. As URLs antigas (`cetecritic.xyz/2026/`) continuam funcionando como acervo.
+
+## Contas, perfil e bolão (login simples)
+
+Sistema de login leve, tudo guardado na própria planilha. **Segurança propositalmente
+simples** (é festival de escola): a senha vai com hash no servidor, mas avise para
+ninguém usar uma senha importante.
+
+**Para ligar isso, é obrigatório atualizar o Apps Script** (o `planilha-apps-script.gs`
+já está pronto neste projeto):
+
+1. Abra a planilha → Extensões → Apps Script.
+2. Substitua o código pelo conteúdo de `planilha-apps-script.gs`.
+3. Implantar → Gerenciar implantações → editar a implantação atual → **Nova versão** → Implantar.
+   (Mantenha a mesma URL `/exec`; assim o `API_URL` do config.js continua valendo.)
+4. Nas duas primeiras vezes que alguém criar conta / palpitar, o script cria
+   sozinho as abas `usuarios` e `palpites`. Não precisa criar à mão.
+
+O que passa a existir no site:
+
+- **Entrar / Criar conta** no menu lateral (usuário + senha, mínimo 4 caracteres).
+- **Perfil** (`perfil.html`): junta as avaliações da pessoa de todas as edições,
+  estatísticas e badges (🎖️ *Veterano de {ano}*, dedicação, bolão etc.).
+- Ao avaliar **logado**, a avaliação fica ligada à conta e aparece no perfil
+  (quem não entra continua votando anônimo, igual antes).
+- **Bolão por episódio**: fica logo abaixo do bloco principal da página da edição
+  e **só aparece em edições que têm `fimVotacao`** (data de fechamento no edicao.js).
+  Libera junto com o "Monte o Seu" (a data `monteAbreEm` do config.js; sem essa
+  data, abre assim que a edição começa). A pessoa logada chuta a **nota final de
+  cada episódio** (grade). Quando a votação **fecha**, aparece o placar de quem
+  teve o **menor erro médio** por episódio, e o 1º lugar ganha 🔮 *Vidente do
+  Bolão {ano}* no perfil. Antes de fechar, ninguém vê o palpite dos outros.
+- **Badges do perfil**: mais de 20 tipos (algumas fáceis, várias difíceis). O
+  perfil mostra 3 por vez (trocam a cada reload); "Ver todas" abre o resto, e as
+  ainda não conquistadas ficam apagadas. As avaliações do perfil abrem ao clicar,
+  mostrando a grade de notas daquela edição.
+
+Reset de senha não existe (não tem e-mail no circuito): se precisar, você edita/apaga
+a linha da pessoa na aba `usuarios` na mão. A aba `usuarios` **nunca** é enviada para
+o navegador — só o servidor lê as senhas.
+
+### Camada social (perfis, carimbos, visitas, XP, comparação)
+
+Tudo isso também vive na planilha. **Exige republicar o Apps Script** (o `.gs` já traz
+tudo). Ele cria sozinho, no primeiro uso, as abas novas: `visitas` e `carimbos`, e
+usa colunas extras na `usuarios` (`tentativas`, `lockUntil`, `perfil`).
+
+- **Trava de login**: 5 tentativas de senha erradas travam a conta por 10 minutos.
+- **Review anônima**: logado, dá pra marcar "enviar como anônimo" no voto — aí a
+  avaliação não entra no seu perfil, XP nem ranking.
+- **Nível por XP**: cada episódio avaliado vale 20 XP; a cada 100 XP sobe um nível.
+- **Perfil por usuário**: `perfil.html?user=NOME` abre o perfil de qualquer pessoa.
+  Ao visitar, fica registrada uma visita (aparece a contagem e a lista no perfil).
+- **Carimbos**: no perfil dos outros dá pra deixar carimbos pré-definidos (💎 👏 🧐 …),
+  com 5 min de intervalo por perfil. O "?" ao lado do título explica cada um.
+- **Compare / Afinidade**: no perfil de outra pessoa, o botão "Compare" mostra a
+  afinidade de gosto (baseada nas notas das MESMAS peças) e onde vocês mais divergem.
+- **Showcase**: no seu perfil, "Editar destaques" deixa escolher peça/edição/noite
+  favorita e a playlist de abertura para exibir.
+- **Hall → Ranking de usuários**: top avaliadores, marcando presença, streak de
+  festivais e bolões vencidos — tudo calculado sozinho a partir dos votos.
+- **Badges**: catálogo grande (histórico, bolão, comportamento, comunidade, especiais).
+  Algumas são aproximações do que você descreveu; "Mestre dos Bastidores" fica travada
+  (depende de upload de foto, que ainda não existe).
+- **Configuração do perfil (`perfil.js`)**: agora os ajustes do perfil ficam num
+  arquivo só, igual ao `config.js`/`hall-dados.js`. Lá você muda XP por episódio,
+  XP por nível, quantas badges aparecem por vez, as metas de várias badges e a lista
+  de **carimbos** (emoji/nome/descrição). ⚠️ Se criar um carimbo novo, a chave dele
+  também precisa entrar no `CARIMBOS_VALIDOS` do `planilha-apps-script.gs` (e
+  republicar), senão o servidor recusa.
+
+### Buscar (busca.html)
+
+Página nova de busca (link "🔎 Buscar" no menu, entre Monte o Seu e Hall). Acha
+**peças, festivais e usuários** com filtros de nota mínima, ano, noite e turma; o
+campo de texto procura por nome de peça, turma ou usuário. Usuários aparecem com a
+bolinha redonda (igual ao perfil) e peças/festivais com a miniatura do `poster.jpg`.
+Não precisa de nada no backend — usa os votos e os arquivos das edições.
+
+> Passo de deploy: Apps Script → colar o `.gs` → Implantar → Gerenciar implantações →
+> editar → **Nova versão** → Implantar. As abas novas se criam sozinhas.
+
+> Depois de reimplantar, teste criar uma conta uma vez. Se der erro de conexão no
+> login mas o voto normal funciona, me avise: é a única parte que depende de o
+> Apps Script responder ao POST (o resto do site já lê a planilha sem problema).
 
 ## Baners:
 

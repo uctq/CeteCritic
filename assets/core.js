@@ -59,7 +59,9 @@ function tempoAtras(ts){
 
 /* ---------------------- contexto da página ---------------------- */
 const ED  = (typeof EDICAO !== 'undefined') ? EDICAO : null;
-const ANO = ED ? ED.ano : null;
+/* ANO vem do edicao.js do ano; na página compartilhada "Em breve" (que não
+   carrega nenhum edicao.js) o ano chega pela URL, em PAGINA.ano */
+const ANO = ED ? ED.ano : ((typeof PAGINA !== 'undefined' && PAGINA.ano) ? Number(PAGINA.ano) : null);
 const CFG_EDICAO = ANO ? (EDICOES.find(e => e.ano === ANO) || { noites: 5 }) : null;
 const NUM_NOITES = CFG_EDICAO ? CFG_EDICAO.noites : 5;
 const EPS = (ED && ED.episodiosPorNoite) ? ED.episodiosPorNoite : 3;
@@ -125,11 +127,15 @@ async function postVoto(sub){
     alert('A planilha ainda não foi configurada (API_URL no config.js).');
     return;
   }
+  /* anexa dono + token só quando a avaliação NÃO é anônima (sub.user preenchido).
+     Anônima = sub.user vazio -> o servidor grava sem dono, não entra no perfil. */
+  const sess = usuarioLogado();
+  const payload = (sess && sub.user && sub.user === sess.user) ? { ...sub, token: sess.token } : { ...sub };
   try{
     await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // evita preflight CORS no Apps Script
-      body: JSON.stringify(sub)
+      body: JSON.stringify(payload)
     });
   }catch(e){ console.error('Falha ao enviar avaliação', e); }
 }
@@ -145,6 +151,234 @@ function filtrarVotosDoAno(lista, ano){
   return (lista || []).filter(s => (s.year ? Number(s.year) : ANO_LEGADO) === Number(ano));
 }
 
+/* =====================================================================
+   CONTAS (login simples) — sessão no navegador + API na planilha
+   =====================================================================
+   Segurança propositalmente leve (é festival de escola): a senha é
+   guardada com hash no servidor e a sessão vive num token. Ainda assim,
+   avise para NÃO reusar uma senha importante. */
+const SESSAO_KEY = 'cetec-sessao';
+function usuarioLogado(){
+  try{ const s = JSON.parse(localStorage.getItem(SESSAO_KEY) || 'null'); return (s && s.user && s.token) ? s : null; }
+  catch(e){ return null; }
+}
+function salvarSessao(user, token){ localStorage.setItem(SESSAO_KEY, JSON.stringify({ user, token })); }
+function sairSessao(){ localStorage.removeItem(SESSAO_KEY); }
+
+async function apiPost(payload){
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // simple request: sem preflight CORS
+    body: JSON.stringify(payload)
+  });
+  return await res.json();
+}
+async function apiRegistrar(user, senha){ return apiPost({ action:'registrar', user, senha }); }
+async function apiLogin(user, senha){ return apiPost({ action:'login', user, senha }); }
+async function apiEnviarPalpite(year, palpites){
+  const s = usuarioLogado();
+  if(!s) return { ok:false, error:'faça login' };
+  return apiPost({ action:'palpite', user:s.user, token:s.token, year, palpites });
+}
+async function fetchPalpites(year){
+  try{
+    const r = await fetch(API_URL + '?palpites=' + year + '&_=' + Date.now(), { cache:'no-store' });
+    const j = await r.json();
+    return (j && Array.isArray(j.palpites)) ? j.palpites : [];
+  }catch(e){ return []; }
+}
+
+/* ---- APIs sociais (perfil / visitas / carimbos) ---- */
+async function apiSalvarPerfil(perfil){
+  const s = usuarioLogado(); if(!s) return { ok:false, error:'faça login' };
+  return apiPost({ action:'perfil', user:s.user, token:s.token, perfil });
+}
+async function apiRegistrarVisita(alvo){
+  const s = usuarioLogado(); if(!s) return { ok:false };
+  return apiPost({ action:'visita', user:s.user, token:s.token, alvo });
+}
+async function apiCarimbar(alvo, tipo){
+  const s = usuarioLogado(); if(!s) return { ok:false, error:'faça login' };
+  return apiPost({ action:'carimbo', user:s.user, token:s.token, alvo, tipo });
+}
+/* reputação (karma): valor = 1 (👍), -1 (👎) ou 0 (tira o voto) */
+async function apiVotarReputacao(alvo, valor){
+  const s = usuarioLogado(); if(!s) return { ok:false, error:'faça login' };
+  return apiPost({ action:'reputacao', user:s.user, token:s.token, alvo, valor });
+}
+async function fetchPerfilPublico(user, por){
+  try{
+    const extra = por ? '&por=' + encodeURIComponent(por) : '';
+    const r = await fetch(API_URL + '?perfil=' + encodeURIComponent(user) + extra + '&_=' + Date.now(), { cache:'no-store' });
+    return await r.json();
+  }catch(e){ return null; }
+}
+/* ranking de reputação (todos os perfis, do maior para o menor) */
+async function fetchRankingReputacao(){
+  try{
+    const r = await fetch(API_URL + '?ranking=reputacao&_=' + Date.now(), { cache:'no-store' });
+    const j = await r.json();
+    return (j && Array.isArray(j.ranking)) ? j.ranking : [];
+  }catch(e){ return []; }
+}
+
+/* ---- configuração do perfil (perfil.js, carregado só na perfil.html) ----
+   Tudo que dá pra ajustar sem mexer aqui fica no perfil.js. Se ele não
+   estiver carregado (outras páginas), vale o padrão abaixo. */
+const PERFIL_CFG = (typeof PERFIL !== 'undefined') ? PERFIL : {};
+const PERFIL_METAS = PERFIL_CFG.metas || {};
+function metaPerfil(chave, padrao){ return (PERFIL_METAS[chave] !== undefined) ? PERFIL_METAS[chave] : padrao; }
+
+/* ---- nível por XP ---- */
+const XP_POR_EPISODIO = PERFIL_CFG.xpPorEpisodio || 20;
+const XP_POR_NIVEL = PERFIL_CFG.xpPorNivel || 100;
+const BADGES_PREVIEW = PERFIL_CFG.badgesPreview || 3;
+function nivelInfo(numEpisodios){
+  const xp = numEpisodios * XP_POR_EPISODIO;
+  const nivel = Math.floor(xp / XP_POR_NIVEL) + 1;
+  const noNivel = xp % XP_POR_NIVEL;
+  return { xp, nivel, noNivel, faltamXp: XP_POR_NIVEL - noNivel, pct: XP_POR_NIVEL ? (noNivel / XP_POR_NIVEL) * 100 : 0 };
+}
+
+/* ---- reputação (karma) + títulos — configurável no perfil.js ---- */
+const REP_TITULOS = (() => {
+  const t = (PERFIL_CFG.reputacao && Array.isArray(PERFIL_CFG.reputacao.titulos) && PERFIL_CFG.reputacao.titulos.length)
+    ? PERFIL_CFG.reputacao.titulos.slice()
+    : [
+        { min: -10, emoji: '🃏', nome: 'Figurante' },
+        { min:   0, emoji: '🎟️', nome: 'Fã' },
+        { min:   3, emoji: '🍿', nome: 'Plateia Fiel' },
+        { min:   8, emoji: '✍️', nome: 'Crítico Iniciante' },
+        { min:  15, emoji: '🎭', nome: 'Roteirista' },
+        { min:  25, emoji: '🎬', nome: 'Cineasta' },
+        { min:  35, emoji: '🏆', nome: 'Diretor Premiado' },
+        { min:  50, emoji: '👑', nome: 'Chefe da Indústria' }
+      ];
+  return t.sort((a, b) => Number(a.min) - Number(b.min));
+})();
+/* dado um valor de reputação, devolve o título atual e o próximo (p/ "faltam X") */
+function tituloPorReputacao(rep){
+  let atual = REP_TITULOS[0] || null;
+  REP_TITULOS.forEach(t => { if(rep >= Number(t.min)) atual = t; });
+  const prox = REP_TITULOS.find(t => Number(t.min) > rep) || null;
+  return { atual, prox };
+}
+
+/* ---- carimbos pré-definidos (visual + explicação) — editáveis no perfil.js.
+   Lembre: o TIPO/chave também precisa existir no CARIMBOS_VALIDOS do Apps Script. */
+const CARIMBOS = PERFIL_CFG.carimbos || {
+  joia:     { emoji:'💎', nome:'Joia',        desc:'Curtiu o perfil e as avaliações dessa pessoa.' },
+  palmas:   { emoji:'👏', nome:'Palmas',      desc:'Reconhecimento pelas boas avaliações.' },
+  critico:  { emoji:'🧐', nome:'Bom crítico', desc:'Acha que a pessoa avalia com critério.' },
+  parceiro: { emoji:'🤝', nome:'Parceiro',    desc:'Um agrado de quem acompanha o festival junto.' },
+  concordo: { emoji:'✅', nome:'Concordo',     desc:'Costuma concordar com as notas dessa pessoa.' },
+  discordo: { emoji:'❌', nome:'Discordo',     desc:'Discorda (na boa!) das notas dessa pessoa.' },
+  polemico: { emoji:'🔥', nome:'Polêmico',     desc:'As opiniões dessa pessoa dão o que falar.' },
+  lenda:    { emoji:'👑', nome:'Lenda',        desc:'Respeito máximo pela dedicação ao acervo.' }
+};
+
+/* ---- afinidade de gosto: baseada nas notas das MESMAS peças ---- */
+function afinidadeGosto(subsA, subsB){
+  const mapa = lista => {
+    const m = {};
+    (lista || []).forEach(s => { const y = s.year; Object.keys(s.grid).forEach(k => { const v = Number(s.grid[k]); if(!isNaN(v)) m[y + '|' + k] = v; }); });
+    return m;
+  };
+  const A = mapa(subsA), B = mapa(subsB);
+  let soma = 0, n = 0;
+  Object.keys(A).forEach(k => { if(B[k] !== undefined){ soma += Math.abs(A[k] - B[k]); n++; } });
+  if(!n) return { pct: null, shared: 0, meanDiff: null };
+  return { pct: Math.max(0, 100 * (1 - (soma / n) / NOTA_MAXIMA)), shared: n, meanDiff: soma / n };
+}
+
+function htmlModalLogin(){
+  return `<div class="modal-overlay" id="loginModalOverlay">
+    <div class="modal-card">
+      <div class="modal-header"><h2 id="loginTitulo">Entrar</h2><button class="modal-close" id="loginModalClose">✕</button></div>
+      <div class="modal-sub">Sua conta guarda suas avaliações no perfil, os badges e o bolão. É um login simples — <b>não use uma senha importante</b>.</div>
+      <div class="login-form">
+        <label for="loginUser">Usuário</label>
+        <input type="text" id="loginUser" maxlength="20" autocomplete="off" placeholder="ex: maria">
+        <label for="loginSenha">Senha</label>
+        <input type="password" id="loginSenha" maxlength="60" placeholder="mínimo 4 caracteres">
+        <div class="login-seguranca">🔒 Sua senha é criptografada — nem nós conseguimos vê-la. Ainda assim, <b>nunca use uma senha que você usa em outro lugar ou algum dado sensível</b>: é um login simples, feito só pra brincadeira do site.</div>
+        <div class="login-erro" id="loginErro"></div>
+        <button class="submit-btn" id="loginSubmit">Entrar</button>
+        <div class="login-toggle">
+          <span id="loginToggleTxt">Ainda não tem conta?</span>
+          <button type="button" id="loginToggleBtn">Criar conta</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* liga os botões de conta (sidebar) e o modal de login. Chamado no montarShell. */
+function wireLogin(){
+  const overlay = document.getElementById('loginModalOverlay');
+  if(!overlay) return;
+  let modo = 'login'; // 'login' | 'registrar'
+
+  const titulo = document.getElementById('loginTitulo');
+  const submit = document.getElementById('loginSubmit');
+  const toggleTxt = document.getElementById('loginToggleTxt');
+  const toggleBtn = document.getElementById('loginToggleBtn');
+  const erro = document.getElementById('loginErro');
+  const inpUser = document.getElementById('loginUser');
+  const inpSenha = document.getElementById('loginSenha');
+
+  function aplicarModo(){
+    const ent = modo === 'login';
+    titulo.textContent = ent ? 'Entrar' : 'Criar conta';
+    submit.textContent = ent ? 'Entrar' : 'Criar conta';
+    toggleTxt.textContent = ent ? 'Ainda não tem conta?' : 'Já tem conta?';
+    toggleBtn.textContent = ent ? 'Criar conta' : 'Entrar';
+    erro.textContent = '';
+  }
+  function abrir(){
+    aplicarModo();
+    overlay.classList.add('open');
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    setTimeout(() => inpUser && inpUser.focus(), 60);
+  }
+  function fechar(){ fecharOverlay(overlay); }
+
+  const btnEntrar = document.getElementById('btnEntrar');
+  if(btnEntrar) btnEntrar.addEventListener('click', abrir);
+  const btnSair = document.getElementById('btnSair');
+  if(btnSair) btnSair.addEventListener('click', () => { sairSessao(); location.reload(); });
+
+  document.getElementById('loginModalClose').addEventListener('click', fechar);
+  overlay.addEventListener('click', ev => { if(ev.target === overlay) fechar(); });
+  toggleBtn.addEventListener('click', () => { modo = modo === 'login' ? 'registrar' : 'login'; aplicarModo(); });
+
+  async function enviar(){
+    const user = inpUser.value.trim();
+    const senha = inpSenha.value;
+    if(user.length < 2){ erro.textContent = 'Escolha um usuário (mínimo 2 caracteres).'; return; }
+    if(senha.length < 4){ erro.textContent = 'A senha precisa de pelo menos 4 caracteres.'; return; }
+    submit.disabled = true;
+    const original = submit.textContent;
+    submit.innerHTML = '<span class="spinner"></span>Aguarde...';
+    erro.textContent = '';
+    try{
+      const r = modo === 'login' ? await apiLogin(user, senha) : await apiRegistrar(user, senha);
+      if(r && r.ok){
+        salvarSessao(r.user, r.token);
+        location.reload();
+        return;
+      }
+      erro.textContent = (r && r.error) ? r.error : 'Não foi possível concluir. Tente de novo.';
+    }catch(e){
+      erro.textContent = 'Falha de conexão. Tente de novo.';
+    }
+    submit.disabled = false;
+    submit.textContent = original;
+  }
+  submit.addEventListener('click', enviar);
+  inpSenha.addEventListener('keydown', ev => { if(ev.key === 'Enter') enviar(); });
+}
+
 /* ---------------------- shell (sidebar + rodapé + modais) ---------------------- */
 function htmlSidebar(){
   let h = `<div class="sidebar-logo">
@@ -155,32 +389,83 @@ function htmlSidebar(){
     <button class="nav-toggle" id="navToggle" aria-label="Abrir menu">☰</button>
   </div>
   <div class="sidebar-nav" id="sidebarNav">
+  `;
+
+  /* bloco de conta primeiro de tudo: "Entrar" ou o usuário logado (+ Sair) */
+  const sess = usuarioLogado();
+  if(sess){
+    h += `<div class="nav-account">
+      <a class="nav-link nav-parent nav-perfil${PAGINA.tipo === 'perfil' ? ' active' : ''}" href="${BASE}perfil.html"><span>👤 ${esc(sess.user)}</span></a>
+      <button class="nav-link nav-sair" id="btnSair" type="button" title="Sair da conta">Sair</button>
+    </div>`;
+  } else {
+    h += `<button class="nav-link nav-parent nav-entrar" id="btnEntrar" type="button">Entrar / Criar conta</button>`;
+  }
+
+  h += `
   <a class="nav-link nav-parent${PAGINA.tipo === 'home' ? ' active' : ''}" href="${BASE}index.html">Início</a>
   <button class="nav-link nav-parent" id="navMonte">Monte o Seu</button>
+  <a class="nav-link nav-parent${PAGINA.tipo === 'busca' ? ' active' : ''}" href="${BASE}busca.html">🔎 Buscar</a>
   <a class="nav-link nav-parent${PAGINA.tipo === 'hall' ? ' active' : ''}" href="${BASE}hall.html">Hall da Fama</a>`;
 
+  /* edição em foco: o ano da página atual ou, na home/hall, a edição em destaque.
+     A década desse ano é a que começa aberta; as outras ficam recolhidas. */
+  const anoFoco = ANO || (typeof EDICAO_EM_DESTAQUE !== 'undefined' ? EDICAO_EM_DESTAQUE : null);
+  const decadaFoco = anoFoco ? Math.floor(anoFoco / 10) * 10 : null;
+
+  /* agrupa as edições por década, preservando a ordem definida no config.js */
+  const decadas = [];
   EDICOES.forEach(e => {
-    const aberto = e.ano === ANO;
-    const p = `${BASE}${e.ano}/`;
-    const at = cond => cond ? ' active' : '';
-    let filhos = `
-      <a class="nav-link nav-child${at(aberto && PAGINA.tipo === 'sobre')}" href="${p}sobre.html">Sobre</a>
-      <a class="nav-link nav-child${at(aberto && PAGINA.tipo === 'abertura')}" href="${p}abertura.html">Abertura</a>`;
-    for(let n = 1; n <= e.noites; n++){
-      filhos += `<a class="nav-link nav-child${at(aberto && PAGINA.tipo === 'noite' && PAGINA.noite === n)}" href="${p}noite-${n}.html">Noite ${n}</a>`;
-    }
-    h += `<div class="nav-section${aberto ? ' open' : ''}">
-      <a class="nav-link nav-parent${at(aberto && (PAGINA.tipo === 'edicao' || PAGINA.tipo === 'monte'))}" href="${p}index.html">
-        <span>Cetec Festival ${e.ano}</span><span class="nav-caret">▾</span>
-      </a>
-      <div class="nav-children">${filhos}</div>
+    const dec = Math.floor(e.ano / 10) * 10;
+    let g = decadas.find(d => d.dec === dec);
+    if(!g){ g = { dec, itens: [] }; decadas.push(g); }
+    g.itens.push(e);
+  });
+
+  decadas.forEach(g => {
+    const decAberta = g.dec === decadaFoco;
+    let edicoesHtml = '';
+    g.itens.forEach(e => {
+      const aberto = e.ano === ANO;
+      const p = `${BASE}${e.ano}/`;
+      const at = cond => cond ? ' active' : '';
+
+      /* edição "Em breve": link único para a página compartilhada — não
+         depende de pasta nem de subpáginas (Sobre/Abertura/Noites) */
+      if(e.emBreve){
+        edicoesHtml += `<div class="nav-section">
+          <a class="nav-link nav-parent nav-embreve${at(aberto)}" href="${BASE}em-breve.html?ano=${e.ano}">
+            <span>Cetec Festival ${e.ano} <span class="nav-tag">em breve</span></span>
+          </a>
+        </div>`;
+        return;
+      }
+
+      let filhos = `
+        <a class="nav-link nav-child${at(aberto && PAGINA.tipo === 'sobre')}" href="${p}sobre.html">Sobre</a>
+        <a class="nav-link nav-child${at(aberto && PAGINA.tipo === 'abertura')}" href="${p}abertura.html">Abertura</a>`;
+      for(let n = 1; n <= e.noites; n++){
+        filhos += `<a class="nav-link nav-child${at(aberto && PAGINA.tipo === 'noite' && PAGINA.noite === n)}" href="${p}noite-${n}.html">Noite ${n}</a>`;
+      }
+      edicoesHtml += `<div class="nav-section${aberto ? ' open' : ''}">
+        <a class="nav-link nav-parent${at(aberto && (PAGINA.tipo === 'edicao' || PAGINA.tipo === 'monte'))}" href="${p}index.html">
+          <span>Cetec Festival ${e.ano}</span><span class="nav-caret">▾</span>
+        </a>
+        <div class="nav-children">${filhos}</div>
+      </div>`;
+    });
+    h += `<div class="nav-decade${decAberta ? ' open' : ''}">
+      <button class="nav-link nav-parent nav-decade-head" type="button">
+        <span>Anos ${g.dec}</span><span class="nav-caret">▾</span>
+      </button>
+      <div class="nav-decade-children">${edicoesHtml}</div>
     </div>`;
   });
   return h + '</div>'; /* fecha .sidebar-nav */
 }
 
 function htmlModalMonte(){
-  const opcoes = EDICOES.map(e => {
+  const opcoes = EDICOES.filter(e => !e.emBreve).map(e => {
     const trancado = e.monteAbreEm && agora() < new Date(e.monteAbreEm);
     const sub = trancado
       ? `Ainda não disponível — abre em ${fmtData(new Date(e.monteAbreEm))}`
@@ -220,6 +505,10 @@ function montarShell(conteudo){
   document.getElementById('monteModalClose').addEventListener('click', () => fecharOverlay(mo));
   mo.addEventListener('click', ev => { if(ev.target === mo) fecharOverlay(mo); });
 
+  /* modal de login/conta (disponível em todas as páginas) */
+  document.body.insertAdjacentHTML('beforeend', htmlModalLogin());
+  wireLogin();
+
   /* menu retrátil no celular — controla a visibilidade direto no elemento,
      então funciona mesmo se o CSS estiver em cache antigo no navegador */
   const navToggle = document.getElementById('navToggle');
@@ -246,8 +535,14 @@ function montarShell(conteudo){
     sidebarEl.classList.toggle('nav-open');
     aplicarEstadoMenu();
   });
-  /* tocar em qualquer item do menu já fecha ele na hora */
+  /* cabeçalho de década: abre/fecha o grupo de edições daquela década */
+  document.querySelectorAll('.nav-decade-head').forEach(btn => {
+    btn.addEventListener('click', () => btn.closest('.nav-decade').classList.toggle('open'));
+  });
+  /* tocar em qualquer item do menu já fecha ele na hora
+     (menos o cabeçalho de década, que só expande/recolhe o grupo) */
   if(sidebarNavEl) sidebarNavEl.addEventListener('click', ev => {
+    if(ev.target.closest('.nav-decade-head')) return;
     if(ehCelular() && ev.target.closest('a, button')){
       sidebarEl.classList.remove('nav-open');
       aplicarEstadoMenu();
@@ -315,6 +610,34 @@ function htmlCountdownBox(ate, comReload){
   return `<div class="grid-countdown-box">
     <div class="lbl">Abre em</div>
     <div class="val" data-count-to="${ate.toISOString()}"${comReload ? ' data-reload="1"' : ''}>--:--:--</div>
+  </div>`;
+}
+
+/* ---------------------- "Em breve" (sem countdown) ----------------------
+   Edições marcadas com emBreve:true no config.js mostram só um aviso
+   "Em breve", sem contador. Útil para anos futuros ainda sem data. */
+function edicaoEmBreve(){ return !!(CFG_EDICAO && CFG_EDICAO.emBreve); }
+function htmlEmBreveBox(sub){
+  return `<div class="grid-countdown-box em-breve-box">
+    <div class="val em-breve-val">Em breve</div>
+    <div class="lbl em-breve-sub">${esc(sub || 'Esta edição ainda não foi liberada')}</div>
+  </div>`;
+}
+
+/* ---------------------- recado de edição histórica ----------------------
+   Banner fixo no topo da página da edição (anos <= ANO_EDICAO_HISTORICA). */
+function htmlHistBanner(){
+  const limite = (typeof ANO_EDICAO_HISTORICA !== 'undefined') ? ANO_EDICAO_HISTORICA : 2009;
+  if(!(ANO && ANO <= limite)) return '';
+  const email = (typeof EMAIL_CONTATO !== 'undefined') ? EMAIL_CONTATO : 'cetecritic@gmail.com';
+  return `<div class="hist-banner">
+    <span class="hist-banner-icon">📜</span>
+    <div class="hist-banner-text">
+      <b>Edição histórica.</b> Esta é uma edição antiga do CETEC Festival, reconstruída
+      com o pouco material que sobreviveu ao tempo — por isso pode faltar peças, sinopses, turmas e vídeos.
+      Guarda fotos, programas ou lembranças dessa época? Contribua enviando para
+      <a href="mailto:${email}">${email}</a> 💛
+    </div>
   </div>`;
 }
 
@@ -620,6 +943,98 @@ async function baixarImagem(areaId, nomeArquivo, btn){
   }
 }
 
+/* ---------------------- cartão compartilhável (story estilo Letterboxd) ----------------------
+   Gera um card vertical (pôster + título + nota em estrelas + marca CETECritic)
+   pronto pra postar no story do Insta. Usado nas peças e nas edições. */
+function garantirHtml2Canvas(){
+  if(typeof html2canvas !== 'undefined') return Promise.resolve();
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+    s.onload = res; s.onerror = () => rej(new Error('html2canvas'));
+    document.head.appendChild(s);
+  });
+}
+function pctEstrelas(nota){
+  const max = (typeof NOTA_MAXIMA !== 'undefined') ? NOTA_MAXIMA : 10;
+  if(nota === null || nota === undefined || isNaN(nota)) return 0;
+  return Math.max(0, Math.min(100, (nota / max) * 100));
+}
+/* opts: { poster, titulo, sub, nota, legenda, arquivo } */
+function abrirCompartilhamento(opts){
+  const max = (typeof NOTA_MAXIMA !== 'undefined') ? NOTA_MAXIMA : 10;
+  const temNota = (opts.nota !== null && opts.nota !== undefined && !isNaN(opts.nota));
+  const pct = pctEstrelas(opts.nota);
+  const overlay = document.createElement('div');
+  overlay.className = 'share-overlay';
+  overlay.innerHTML = `
+    <div class="share-modal">
+      <div class="share-card" id="shareCard">
+        <div class="sc-poster-wrap"><img class="sc-poster-img" src="${esc(opts.poster)}" alt="" onerror="this.closest('.sc-poster-wrap').classList.add('sem-poster'); this.remove();"></div>
+        <div class="sc-body">
+          <div class="sc-title">${esc(opts.titulo)}</div>
+          ${opts.sub ? `<div class="sc-sub">${esc(opts.sub)}</div>` : ''}
+          ${temNota
+            ? `<div class="sc-stars"><span class="sc-stars-base">★★★★★</span><span class="sc-stars-fill" style="width:${pct}%">★★★★★</span></div>
+               <div class="sc-nota">${Number(opts.nota).toFixed(1)}<span>/${max}</span></div>`
+            : `<div class="sc-nota sc-semnota">Ainda sem avaliações</div>`}
+          ${opts.legenda ? `<div class="sc-legenda">${esc(opts.legenda)}</div>` : ''}
+          <div class="sc-brand"><img src="${BASE}assets/logo.png" alt="" onerror="this.remove()"><span>CETECritic</span></div>
+        </div>
+      </div>
+      <div class="share-actions">
+        <button class="btn btn-solid" id="shareBaixar">📥 Baixar</button>
+        <button class="btn btn-ghost" id="shareEnviar">📤 Compartilhar</button>
+        <button class="btn btn-ghost" id="shareFechar">Fechar</button>
+      </div>
+      <div class="share-hint" id="shareHint">Dica: no celular, "Compartilhar" abre direto o Instagram, WhatsApp etc.</div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const fechar = () => overlay.remove();
+  overlay.addEventListener('click', ev => { if(ev.target === overlay) fechar(); });
+  overlay.querySelector('#shareFechar').addEventListener('click', fechar);
+
+  const card = overlay.querySelector('#shareCard');
+  const hint = overlay.querySelector('#shareHint');
+  const bBaixar = overlay.querySelector('#shareBaixar');
+  const bEnviar = overlay.querySelector('#shareEnviar');
+
+  async function gerarBlob(){
+    await garantirHtml2Canvas();
+    await aguardarImagens(card);
+    const canvas = await html2canvas(card, { backgroundColor: '#0e0f12', scale: 3, useCORS: true, imageTimeout: 15000 });
+    return await new Promise(res => canvas.toBlob(res, 'image/png'));
+  }
+  bBaixar.addEventListener('click', async () => {
+    bBaixar.disabled = true; hint.textContent = 'Gerando imagem...';
+    try{
+      const blob = await gerarBlob();
+      const a = document.createElement('a');
+      a.download = opts.arquivo || 'cetecritic.png';
+      a.href = URL.createObjectURL(blob);
+      a.click();
+      URL.revokeObjectURL(a.href);
+      hint.textContent = 'Imagem salva! 📸';
+    }catch(e){ console.error(e); hint.textContent = 'Não foi possível gerar a imagem.'; }
+    bBaixar.disabled = false;
+  });
+  bEnviar.addEventListener('click', async () => {
+    bEnviar.disabled = true; hint.textContent = 'Gerando imagem...';
+    try{
+      const blob = await gerarBlob();
+      const file = new File([blob], opts.arquivo || 'cetecritic.png', { type: 'image/png' });
+      if(navigator.canShare && navigator.canShare({ files: [file] })){
+        await navigator.share({ files: [file], title: opts.titulo });
+        hint.textContent = '';
+      }else{
+        const a = document.createElement('a'); a.download = file.name; a.href = URL.createObjectURL(blob); a.click(); URL.revokeObjectURL(a.href);
+        hint.textContent = 'Seu navegador não compartilha imagem direto — baixamos pra você postar. 📸';
+      }
+    }catch(e){ if(!(e && e.name === 'AbortError')){ console.error(e); hint.textContent = 'Não foi possível compartilhar.'; } }
+    bEnviar.disabled = false;
+  });
+}
+
 /* ---------------------- estatísticas & badges ---------------------- */
 function statsDeVals(vals){
   const n = vals.length;
@@ -724,6 +1139,22 @@ function badgesExtrasDaPeca(ano, key){
 function paginaEdicao(){
   document.title = `${ED.titulo} - Avaliações`;
 
+  /* -------- edição "Em breve" (sem countdown) -------- */
+  if(edicaoEmBreve()){
+    montarShell(`
+      <div id="capture-area">
+        <div class="left-panel">
+          <div class="poster-box question-mark"><span>?</span></div>
+          <div class="title-section"><h1>${esc(ED.titulo)}</h1><div class="description">-</div></div>
+        </div>
+        <div class="grid-blur-wrap">
+          <div class="grid-panel">${gridVazioHtml()}</div>
+          <div class="grid-blur-overlay">${htmlEmBreveBox()}</div>
+        </div>
+      </div>`);
+    return;
+  }
+
   /* -------- edição ainda não começou: teaser com blur + countdown -------- */
   if(!edicaoComecou()){
     montarShell(`
@@ -755,10 +1186,12 @@ function paginaEdicao(){
   }
 
   montarShell(`
+    ${htmlHistBanner()}
     <div class="topbar">
       <div class="topbar-actions">
         <button class="btn btn-solid" id="openReviewModal" disabled title="Verificando horário no servidor...">Avaliar episódios</button>
         <button class="btn btn-ghost" id="downloadBtn">Baixar imagem</button>
+        <button class="btn btn-ghost" id="shareEdicaoBtn">📤 Compartilhar edição</button>
       </div>
     </div>
 
@@ -792,9 +1225,15 @@ function paginaEdicao(){
       <div class="grid-panel" id="grid-container"></div>
     </div>
 
+    ${FIM_VOTACAO ? `<div class="section" id="bolaoSection">
+      <h2>🔮 Bolão — palpite por episódio</h2>
+      <div class="sub">Chute a <b>nota média final de cada episódio</b> (de 0 a ${NOTA_MAXIMA}). Quando a votação fechar, quem tiver o menor erro médio ganha destaque no perfil. Dá pra ajustar até fechar.</div>
+      <div id="bolaoBox"><div class="empty-note">Carregando...</div></div>
+    </div>` : ''}
+
     <div class="section" id="geraisSection">
       <h2>Avaliações Gerais</h2>
-      <div class="sub">A nota exibida no topo é a média de todas as avaliações recebidas aqui — igual um agregador de notas. Você pode avaliar só os episódios que quiser, não precisa preencher tudo.</div>
+      <div class="sub">A nota exibida no topo é a média de todas as avaliações recebidas aqui. Você pode avaliar só os episódios que quiser, não precisa preencher tudo.</div>
       <div class="gerais-summary">
         <div class="gerais-stat"><div class="big" id="geraisAvg">–</div><div class="lbl">Nota geral</div></div>
         <div class="gerais-stat"><div class="big" id="geraisCount">0</div><div class="lbl">Avaliações recebidas</div></div>
@@ -848,8 +1287,30 @@ function paginaEdicao(){
   document.getElementById('downloadBtn').addEventListener('click', ev =>
     baixarImagem('capture-area', `Cetec_Festival_${ANO}_Ratings.png`, ev.currentTarget));
 
+  const shareEdBtn = document.getElementById('shareEdicaoBtn');
+  if(shareEdBtn) shareEdBtn.addEventListener('click', () => {
+    const notas = [];
+    submissions.forEach(s => Object.values(s.grid).forEach(v => { const x = Number(v); if(!isNaN(x)) notas.push(x); }));
+    abrirCompartilhamento({
+      poster: (ED && ED.poster) || 'poster.jpg',
+      titulo: (ED && ED.titulo) || `Cetec Festival ${ANO}`,
+      sub: `Cetec Festival ${ANO}`,
+      nota: media(notas),
+      legenda: `Média do festival · ${notas.length} nota${notas.length === 1 ? '' : 's'} no CETECritic`,
+      arquivo: `CETECritic_${ANO}.png`
+    });
+  });
+
   /* envio */
   const reviewerNameEl = document.getElementById('reviewerName');
+  /* logado: o nome vem da conta e a avaliação vai pro perfil — a menos que
+     a pessoa marque "anônimo" */
+  const sessNome = usuarioLogado();
+  if(sessNome){
+    const nf = reviewerNameEl.closest('.name-field');
+    if(nf) nf.innerHTML = `<label>Avaliando como <b style="color:var(--gold)">👤 ${esc(sessNome.user)}</b></label>
+      <label class="anon-check"><input type="checkbox" id="reviewAnon"> Enviar como anônimo <span class="anon-sub">(não vincula ao seu perfil)</span></label>`;
+  }
   document.getElementById('submitReview').addEventListener('click', async () => {
     if(!podeVotar()) return;
     if(Object.keys(formValues).length < 1) return;
@@ -862,12 +1323,16 @@ function paginaEdicao(){
     btn.innerHTML = '<span class="spinner"></span>Enviando...';
     localStorage.setItem('last-submission-ts', Date.now());
 
+    const sessAtual = usuarioLogado();
+    const anon = !!(document.getElementById('reviewAnon') && document.getElementById('reviewAnon').checked);
+    const logadoNaoAnon = sessAtual && !anon;
     const submission = {
       id: Date.now() + '-' + Math.random().toString(36).slice(2,7),
       ts: Date.now(),
-      name: reviewerNameEl.value.trim().slice(0, 40),
+      name: (logadoNaoAnon ? sessAtual.user : (anon ? 'Anônimo' : reviewerNameEl.value.trim())).slice(0, 40),
       grid: { ...formValues },
-      year: ANO
+      year: ANO,
+      user: logadoNaoAnon ? sessAtual.user : ''
     };
     submissions.push(submission);
     refreshDisplayGrids();
@@ -879,7 +1344,7 @@ function paginaEdicao(){
     await new Promise(r => setTimeout(r, 900));
 
     formValues = {};
-    reviewerNameEl.value = '';
+    if(reviewerNameEl && reviewerNameEl.isConnected) reviewerNameEl.value = '';
     buildFormGrid();
     btn.textContent = originalLabel;
     fecharModal();
@@ -909,6 +1374,139 @@ function paginaEdicao(){
   }
   tickPagina = atualizarEstado;
 
+  /* ---------------------- bolão por episódio ----------------------
+     Só existe se a edição tem fimVotacao (FIM_VOTACAO). Libera junto com o
+     Monte o Seu (monteAbreEm). Aberto+logado: grade de palpite por episódio.
+     Fechado: placar por menor erro médio (palpite x média real de cada ep). */
+  const bolaoAbre = (CFG_EDICAO && CFG_EDICAO.monteAbreEm) ? new Date(CFG_EDICAO.monteAbreEm) : null;
+  let bolaoModo = null;
+
+  function renderBolaoPlacar(box){
+    fetchPalpites(ANO).then(lista => {
+      const realPorKey = {};
+      for(let s = 1; s <= NUM_NOITES; s++){
+        for(let e = 1; e <= epsDaNoite(s); e++){
+          const key = `s${s}e${e}`;
+          const vals = valoresDaChave(key).map(Number).filter(v => !isNaN(v));
+          if(vals.length) realPorKey[key] = media(vals);
+        }
+      }
+      if(!Object.keys(realPorKey).length){ box.innerHTML = '<div class="empty-note">Ainda não há notas suficientes para apurar o bolão.</div>'; return; }
+      if(!lista.length){ box.innerHTML = '<div class="empty-note">Ninguém palpitou nesta edição.</div>'; return; }
+      const sess = usuarioLogado();
+      const alvo = sess ? sess.user.trim().toLowerCase() : null;
+      const ranking = lista.map(p => {
+        let soma = 0, n = 0;
+        Object.keys(p.palpites || {}).forEach(k => {
+          if(realPorKey[k] !== undefined){ soma += Math.abs(Number(p.palpites[k]) - realPorKey[k]); n++; }
+        });
+        return { user: String(p.user), erroMedio: n ? soma / n : Infinity, n };
+      }).filter(r => r.n > 0).sort((a,b) => a.erroMedio - b.erroMedio);
+      if(!ranking.length){ box.innerHTML = '<div class="empty-note">Ninguém palpitou episódios que já têm nota.</div>'; return; }
+      const medalhas = ['🥇','🥈','🥉'];
+      box.innerHTML = `<div class="bolao-real">Placar do bolão — <b>menor erro médio por episódio</b> vence · ${ranking.length} participante${ranking.length === 1 ? '' : 's'}</div>
+        <div class="record-list">${ranking.slice(0, 10).map((r, i) => {
+          const eu = alvo && r.user.trim().toLowerCase() === alvo;
+          return `<div class="record-item${eu ? ' bolao-eu' : ''}">
+            <span class="rec-emoji">${medalhas[i] || '•'}</span>
+            <div><div class="rec-title">${esc(r.user)}${eu ? ' (você)' : ''}</div>
+            <div class="rec-text">erro médio ${r.erroMedio.toFixed(2)} · ${r.n} episódio${r.n === 1 ? '' : 's'} palpitado${r.n === 1 ? '' : 's'}</div></div>
+          </div>`;
+        }).join('')}</div>`;
+    });
+  }
+
+  function renderBolaoForm(box, sess){
+    const chaveLocal = `cetec-bolao-${ANO}-${sess.user.toLowerCase()}`;
+    let salvos = {};
+    try{ salvos = JSON.parse(localStorage.getItem(chaveLocal) || '{}'); }catch(e){ salvos = {}; }
+    const bolaoValues = { ...salvos };
+
+    box.innerHTML = `<div class="grid-panel bolao-grid" id="bolaoGridPanel"></div>
+      <div class="bolao-actions">
+        <div class="bolao-msg" id="bolaoMsg">Preencha o palpite da nota final de cada episódio já liberado.</div>
+        <button class="submit-btn" id="bolaoSalvar">Salvar palpites</button>
+      </div>`;
+
+    let g = `<div class="grid-row"><div class="cell label"></div>`;
+    for(let s = 1; s <= NUM_NOITES; s++) g += `<div class="cell header">${cabecalhoNoite(s)}</div>`;
+    g += `</div>`;
+    for(let e = 1; e <= MAX_EPS; e++){
+      g += `<div class="grid-row"><div class="cell label">E${e}</div>`;
+      for(let s = 1; s <= NUM_NOITES; s++){
+        if(e > epsDaNoite(s)){ g += `<div class="cell cell-void"></div>`; continue; }
+        const key = `s${s}e${e}`;
+        if(!noiteLiberada(s)){ g += `<div class="cell cell-input locked" title="Libera em ${fmtData(dataNoite(s))}">🔒</div>`; continue; }
+        const val = bolaoValues[key];
+        g += `<div class="cell cell-input" id="bcell-${key}" style="${val !== undefined ? `background-color:${corDaNota(val)}` : ''}">
+          <input type="number" min="0" max="${NOTA_MAXIMA}" step="0.1" placeholder="?" data-key="${key}" value="${val !== undefined ? val : ''}">
+        </div>`;
+      }
+      g += `</div>`;
+    }
+    document.getElementById('bolaoGridPanel').innerHTML = g;
+
+    box.querySelectorAll('.cell-input input').forEach(inp => inp.addEventListener('input', () => {
+      const key = inp.dataset.key;
+      const cell = document.getElementById(`bcell-${key}`);
+      if(inp.value === ''){ delete bolaoValues[key]; cell.style.backgroundColor = 'var(--surface-2)'; return; }
+      let v = parseFloat(inp.value);
+      if(isNaN(v)) return;
+      if(v > NOTA_MAXIMA){ v = NOTA_MAXIMA; inp.value = NOTA_MAXIMA; }
+      if(v < 0){ v = 0; inp.value = 0; }
+      bolaoValues[key] = v;
+      cell.style.backgroundColor = corDaNota(v);
+    }));
+
+    document.getElementById('bolaoSalvar').addEventListener('click', async () => {
+      const msg = document.getElementById('bolaoMsg');
+      if(!Object.keys(bolaoValues).length){ msg.textContent = 'Preencha pelo menos um episódio.'; return; }
+      const bt = document.getElementById('bolaoSalvar');
+      const orig = bt.textContent;
+      bt.disabled = true;
+      bt.innerHTML = '<span class="spinner"></span>Salvando...';
+      const r = await apiEnviarPalpite(ANO, bolaoValues);
+      bt.disabled = false;
+      bt.textContent = orig;
+      if(r && r.ok){
+        localStorage.setItem(chaveLocal, JSON.stringify(bolaoValues));
+        msg.innerHTML = 'Palpites salvos ✓ — dá pra ajustar até a votação fechar.';
+      } else {
+        msg.textContent = (r && r.error) ? r.error : 'Não foi possível salvar. Tente de novo.';
+      }
+    });
+  }
+
+  async function atualizarBolao(){
+    const box = document.getElementById('bolaoBox');
+    if(!box) return; /* seção não existe se a edição não tem fimVotacao */
+
+    if(votacaoEncerrada()){
+      bolaoModo = 'fechado';
+      renderBolaoPlacar(box);
+      return;
+    }
+    /* trava até liberar junto com o Monte o Seu */
+    if(bolaoAbre && agora() < bolaoAbre){
+      if(bolaoModo === 'travado') return;
+      bolaoModo = 'travado';
+      box.innerHTML = `<div class="bolao-locked">🔒 O bolão libera em <b>${fmtData(bolaoAbre)}</b> — junto com o "Monte o Seu" deste ano.</div>`;
+      return;
+    }
+    const sess = usuarioLogado();
+    const modo = sess ? 'aberto-in' : 'aberto-out';
+    if(modo === bolaoModo) return; /* já renderizado: não recria (não apaga o que a pessoa digita) */
+    bolaoModo = modo;
+
+    if(!sess){
+      box.innerHTML = `<div class="bolao-login"><span>Entre para dar seus palpites no bolão.</span><button class="btn btn-solid" id="bolaoEntrar">Entrar / Criar conta</button></div>`;
+      const be = document.getElementById('bolaoEntrar');
+      if(be) be.addEventListener('click', () => { const e = document.getElementById('btnEntrar'); if(e) e.click(); });
+      return;
+    }
+    renderBolaoForm(box, sess);
+  }
+
   /* carga inicial + atualização periódica */
   async function carregar(){
     await fetchVotos();
@@ -917,6 +1515,7 @@ function paginaEdicao(){
     renderSubmissions();
     if(!modalOverlay.classList.contains('open')) buildFormGrid();
     atualizarEstado();
+    atualizarBolao();
   }
   carregar();
   setInterval(carregar, 20000);
@@ -928,6 +1527,10 @@ function paginaEdicao(){
 function paginaSobre(){
   document.title = `${ED.titulo} - Sobre`;
   const s = ED.sobre || {};
+  if(edicaoEmBreve()){
+    montarShell(`<div class="noite-intro"><h1>Sobre o Festival</h1></div>${htmlEmBreveBox()}`);
+    return;
+  }
   if(!s.texto && !edicaoComecou() && inicioEdicao()){
     montarShell(`<div class="noite-intro"><h1>Sobre o Festival</h1></div>${htmlCountdownBox(inicioEdicao(), true)}`);
     fetchVotos();
@@ -951,6 +1554,10 @@ function paginaSobre(){
 function paginaAbertura(){
   document.title = `${ED.titulo} - Abertura`;
   const a = ED.abertura || {};
+  if(edicaoEmBreve()){
+    montarShell(`<div class="noite-intro"><h1>Abertura</h1></div>${htmlEmBreveBox()}`);
+    return;
+  }
   if(!a.texto && !edicaoComecou() && inicioEdicao()){
     montarShell(`<div class="noite-intro"><h1>Abertura</h1></div>${htmlCountdownBox(inicioEdicao(), true)}`);
     fetchVotos();
@@ -981,6 +1588,12 @@ function paginaNoite(n){
     <p>${esc(nd.subtitulo || `Turmas que se apresentaram na noite ${n} do festival.`)}</p>
   </div>`;
 
+  /* edição "Em breve": nem mostra a noite ainda */
+  if(edicaoEmBreve()){
+    montarShell(intro + htmlEmBreveBox());
+    return;
+  }
+
   /* noite ainda trancada: só o countdown (baseado na DATA do noite-N.js) */
   if(!noiteLiberada(n)){
     montarShell(intro + htmlCountdownBox(dataNoite(n), true));
@@ -1006,7 +1619,10 @@ function paginaNoite(n){
             <div class="noite-card-title">${esc(info.titulo)} <span class="peca-badges" id="badges-${key}"></span></div>
             <div class="noite-card-turma">Turma ${esc(info.turma)}</div>
           </div>
-          <div class="noite-card-rating" id="nota-${key}"><div class="val empty">–</div><div class="cnt">Sem avaliações</div></div>
+          <div class="noite-card-right">
+            <div class="noite-card-rating" id="nota-${key}"><div class="val empty">–</div><div class="cnt">Sem avaliações</div></div>
+            <button class="peca-share" data-key="${key}" data-titulo="${esc(info.titulo)}" data-turma="${esc(info.turma)}" title="Compartilhar a nota desta peça (story)">📤</button>
+          </div>
         </div>
         <div class="noite-card-synopsis">${esc(info.sinopse)}</div>
         ${info.youtube
@@ -1036,6 +1652,23 @@ function paginaNoite(n){
   }
 
   renderCards();
+
+  /* compartilhar (story) de uma peça específica: usa a média ao vivo da peça */
+  {
+    const cont = document.getElementById('noite-cards');
+    if(cont) cont.addEventListener('click', ev => {
+      const b = ev.target.closest('.peca-share'); if(!b) return;
+      const avg = media(valoresDaChave(b.dataset.key));
+      abrirCompartilhamento({
+        poster: (typeof ED !== 'undefined' && ED && ED.poster) || 'poster.jpg',
+        titulo: b.dataset.titulo,
+        sub: `Turma ${b.dataset.turma} · Cetec Festival ${ANO}`,
+        nota: avg,
+        legenda: 'Nota da plateia no CETECritic',
+        arquivo: `CETECritic_${ANO}_${String(b.dataset.titulo).replace(/[^\w]+/g, '_').slice(0, 40)}.png`
+      });
+    });
+  }
 
   /* badge ⭐: confere se o melhor episódio da HISTÓRIA (todas as edições,
      mínimo de 3 avaliações) é uma peça desta noite */
@@ -1075,6 +1708,22 @@ function paginaNoite(n){
    ===================================================================== */
 function paginaMonte(){
   document.title = `Meu ${ED.titulo}`;
+
+  /* edição "Em breve": trava o Monte o Seu deste ano */
+  if(edicaoEmBreve()){
+    montarShell(`
+      <div id="custom-capture-area">
+        <div class="left-panel">
+          <div class="poster-box question-mark"><span>?</span></div>
+          <div class="title-section"><h1>Meu ${esc(ED.titulo)}</h1><div class="description">-</div></div>
+        </div>
+        <div class="grid-blur-wrap">
+          <div class="grid-panel">${gridVazioHtml()}</div>
+          <div class="grid-blur-overlay">${htmlEmBreveBox()}</div>
+        </div>
+      </div>`);
+    return;
+  }
 
   const monteAbre = (CFG_EDICAO && CFG_EDICAO.monteAbreEm) ? new Date(CFG_EDICAO.monteAbreEm) : null;
   if(monteAbre && agora() < monteAbre){
@@ -1278,15 +1927,20 @@ function paginaMonte(){
    ===================================================================== */
 async function paginaHall(){
   document.title = 'CETECritic - Hall da Fama';
-  montarShell(`
-    <div class="noite-intro">
-      <h1>Hall da Fama</h1>
-      <p>Recordes, rankings e estatísticas de todas as edições — atualizados automaticamente. <span class="hall-stamp" id="hallAtualizado"></span></p>
-    </div>
 
-    <div class="hall-cards" id="hallCards"><div class="empty-note">Carregando estatísticas...</div></div>
+  /* ---- configuração vinda do hall-dados.js ----
+     HALL.contagens: quantos itens cada ranking mostra (padrão 10).
+     HALL.ordemSecoes: em que ordem as seções abaixo aparecem — lista com os
+     nomes das chaves (veja o comentário no topo do hall-dados.js). Seção que
+     não estiver na lista aparece no final, na ordem padrão. */
+  const CNT = Object.assign({ topPecas: 10, topNoites: 10, rankUsuarios: 10 },
+    (typeof HALL !== 'undefined' && HALL.contagens) || {});
+  const ORDEM_PADRAO = ['badges','topPecas','topNoites','topFestivais','mediaTurmas','comparacaoDestaque','compararEdicoes','evolucao','distribuicao','heatmap','recPecas','recNoites','recEdicoes','recComunidade','rankUsuarios','topReputacao','curiosidades'];
+  const ordemCfg = (typeof HALL !== 'undefined' && Array.isArray(HALL.ordemSecoes) && HALL.ordemSecoes.length) ? HALL.ordemSecoes : ORDEM_PADRAO;
+  const ordemFinal = [...ordemCfg, ...ORDEM_PADRAO.filter(k => !ordemCfg.includes(k))];
 
-    <div class="section">
+  const SECOES = {
+    badges: `<div class="section">
       <h2>🏅 As Badges</h2>
       <div class="sub">Medalhas que as peças conquistam automaticamente (mínimo de ${(typeof HALL !== 'undefined' && HALL.minAvaliacoes) || 3} avaliações; cada peça leva no máximo 1 badge automática por edição — a que mais se encaixa). Elas aparecem ao lado do título da peça, na página da noite dela.</div>
       <div class="badge-legend">${[
@@ -1298,36 +1952,43 @@ async function paginaHall(){
           <div><div class="rec-title">${b.nome}</div><div class="rec-text">${b.desc || ''}</div></div>
         </div>`).join('')}
       </div>
-    </div>
+    </div>`,
 
-    <div class="section">
-      <h2>🏆 Top 10 Peças</h2>
+    topPecas: `<div class="section">
+      <h2>🏆 Top ${CNT.topPecas} Peças</h2>
       <div class="sub">Clique em uma barra para abrir a página da noite da peça.</div>
       <select class="hall-select" id="hallFiltroPecas"></select>
       <div style="height:360px"><canvas id="chartTopPecas"></canvas></div>
-    </div>
+    </div>`,
 
-    <div class="section">
-      <h2>🌙 Top 10 Noites</h2>
+    topNoites: `<div class="section">
+      <h2>🌙 Top ${CNT.topNoites} Noites</h2>
       <div class="sub">Melhor nota média por noite. Clique para abrir a noite.</div>
       <select class="hall-select" id="hallFiltroNoites"></select>
       <div style="height:360px"><canvas id="chartTopNoites"></canvas></div>
-    </div>
+    </div>`,
 
-    <div class="section">
+    topFestivais: `<div class="section">
       <h2>🏅 Top Festivais</h2>
       <div class="sub">Ranking das edições pela nota média geral. Clique para abrir a edição.</div>
       <div style="height:240px"><canvas id="chartTopFestivais"></canvas></div>
-    </div>
+    </div>`,
 
-    <div class="section">
+    mediaTurmas: `<div class="section">
+      <h2>🎓 Média histórica por turma</h2>
+      <div class="sub">Nota média de todas as peças de cada turma no período escolhido (mínimo de ${(typeof HALL !== 'undefined' && HALL.minAvaliacoes) || 3} avaliações).</div>
+      <select class="hall-select" id="hallFiltroTurmas"></select>
+      <div class="record-list" id="recTurmas"><div class="empty-note">Carregando...</div></div>
+    </div>`,
+
+    comparacaoDestaque: `<div class="section">
       <h2>⚖️ ${EDICAO_EM_DESTAQUE} vs. história</h2>
       <div class="sub">Nota média por noite: a edição em destaque comparada com quem você escolher.</div>
       <div class="hall-filtros">Comparar com <select class="hall-select" id="hallCompara"><option value="hist">Média histórica</option></select></div>
       <div style="height:240px"><canvas id="chartComparacao"></canvas></div>
-    </div>
+    </div>`,
 
-    <div class="section">
+    compararEdicoes: `<div class="section">
       <h2>🆚 Comparar edições</h2>
       <div class="sub">Escolha duas edições para ver as notas gerais e o detalhe noite a noite, episódio por episódio. Clique numa peça para abrir a página dela.</div>
       <div class="hall-filtros">
@@ -1337,33 +1998,69 @@ async function paginaHall(){
       <div class="hall-cards" id="compCards"></div>
       <div style="height:240px; margin-bottom:16px"><canvas id="chartCompNoites"></canvas></div>
       <div id="compDetalhe"></div>
-    </div>
+    </div>`,
 
-    <div class="section">
+    evolucao: `<div class="section">
       <h2>📈 Evolução do festival</h2>
       <div class="sub">Nota média por edição e "exigência do público" (% de notas 9+). Clique num ponto para abrir a edição.</div>
       <div class="hall-filtros">De <select class="hall-select" id="hallDe"></select> até <select class="hall-select" id="hallAte"></select></div>
       <div style="height:240px"><canvas id="chartEvolucao"></canvas></div>
       <div style="height:200px; margin-top:18px"><canvas id="chartP9"></canvas></div>
-    </div>
+    </div>`,
 
-    <div class="section">
+    distribuicao: `<div class="section">
       <h2>🍩 Distribuição das notas</h2>
       <div class="sub">Todas as notas já registradas no site, agrupadas de 0 a ${NOTA_MAXIMA}.</div>
       <div style="height:300px"><canvas id="chartDist"></canvas></div>
-    </div>
+    </div>`,
 
-    <div class="section">
+    heatmap: `<div class="section">
       <h2>🗓️ Notas por noite ao longo dos anos</h2>
       <div class="sub">Cada célula é a média da noite naquele ano. Clique para abrir.</div>
       <div class="heatmap" id="hallHeatmap"></div>
+    </div>`,
+
+    recPecas: `<div class="section"><h2>🏆 Prateleira dos Campeões</h2><div class="sub">Recordes das peças.</div><div class="record-list" id="recPecas"></div></div>`,
+    recNoites: `<div class="section"><h2>🌙 A Batalha das Noites</h2><div class="sub">Recordes de programação.</div><div class="record-list" id="recNoites"></div></div>`,
+    recEdicoes: `<div class="section"><h2>📅 Linha do Tempo &amp; Edições</h2><div class="sub">Comparativo entre os anos.</div><div class="record-list" id="recEdicoes"></div></div>`,
+    recComunidade: `<div class="section"><h2>👥 Números da Comunidade</h2><div class="sub">A escala da plateia do CETECritic.</div><div class="record-list" id="recComunidade"></div></div>`,
+    rankUsuarios: `<div class="section"><h2>👤 Ranking de usuários</h2><div class="sub">Os perfis mais ativos do acervo (top ${CNT.rankUsuarios}) — clique num nome para abrir o perfil.</div><div class="rank-cols" id="rankUsuarios"><div class="empty-note">Carregando...</div></div></div>`,
+    topReputacao: `<div class="section"><h2>👑 Maiores reputações</h2><div class="sub">Os perfis com mais reputação (votos 👍/👎 da comunidade) e o cargo que ocupam. Clique num nome para abrir o perfil.</div><div class="rep-rank" id="topReputacao"><div class="empty-note">Carregando...</div></div></div>`,
+    curiosidades: `<div class="section" id="secCurio" style="display:none"><h2>🎭 Curiosidades</h2><div class="record-list" id="recCurio"></div></div>`
+  };
+
+  montarShell(`
+    <div class="noite-intro">
+      <h1>Hall da Fama</h1>
+      <p>Recordes, rankings e estatísticas de todas as ediçõe. <span class="hall-stamp" id="hallAtualizado"></span></p>
     </div>
 
-    <div class="section"><h2>🏆 Prateleira dos Campeões</h2><div class="sub">Recordes das peças.</div><div class="record-list" id="recPecas"></div></div>
-    <div class="section"><h2>🌙 A Batalha das Noites</h2><div class="sub">Recordes de programação.</div><div class="record-list" id="recNoites"></div></div>
-    <div class="section"><h2>📅 Linha do Tempo &amp; Edições</h2><div class="sub">Comparativo entre os anos.</div><div class="record-list" id="recEdicoes"></div></div>
-    <div class="section"><h2>👥 Números da Comunidade</h2><div class="sub">A escala da plateia do CETECritic.</div><div class="record-list" id="recComunidade"></div></div>
-    <div class="section" id="secCurio" style="display:none"><h2>🎭 Curiosidades</h2><div class="record-list" id="recCurio"></div></div>`);
+    <div class="hall-cards" id="hallCards"><div class="empty-note">Carregando estatísticas...</div></div>
+
+    ${ordemFinal.map(k => SECOES[k] || '').join('')}`);
+
+  /* 👑 Maiores reputações — busca o ranking no servidor e mostra nome + cargo.
+     Roda sozinho, independente dos gráficos, e atualiza a cada 20s. */
+  (function(){
+    const NREP = CNT.rankUsuarios || 10;
+    async function renderTopRep(){
+      const box = document.getElementById('topReputacao');
+      if(!box) return;
+      const rk = await fetchRankingReputacao();
+      const lista = rk.filter(x => Number(x.rep) > 0).slice(0, NREP);
+      if(!lista.length){ box.innerHTML = '<div class="empty-note">Ainda ninguém recebeu votos de reputação. Vote nos perfis pra começar o ranking!</div>'; return; }
+      box.innerHTML = `<div class="record-list">${lista.map((x, i) => {
+        const t = tituloPorReputacao(Number(x.rep)).atual || { emoji: '🎟️', nome: 'Fã' };
+        const medal = ['🥇','🥈','🥉'][i] || (i + 1) + 'º';
+        return `<a class="record-item" href="${BASE}perfil.html?user=${encodeURIComponent(x.user)}">
+          <span class="rec-emoji">${medal}</span>
+          <div><div class="rec-title">${esc(x.user)} <span class="titulo-chip">${t.emoji} ${esc(t.nome)}</span></div>
+          <div class="rec-text">${x.rep} de reputação</div></div></a>`;
+      }).join('')}</div>`;
+    }
+    renderTopRep();
+    setInterval(renderTopRep, 20000);
+  })();
 
   if(typeof Chart !== 'undefined'){
     Chart.defaults.color = '#9a9ea6';
@@ -1415,6 +2112,7 @@ async function paginaHall(){
   let curioTimer = null;
   let filtroPecas = 'all';
   let filtroNoites = 'all';
+  let filtroTurmas = 'all';
   let comparaCom = 'hist';
 
   /* filtros de período (o "último ano" = edição mais recente com votos) */
@@ -1428,9 +2126,11 @@ async function paginaHall(){
   ];
   const selPecas = document.getElementById('hallFiltroPecas');
   const selNoites = document.getElementById('hallFiltroNoites');
-  [selPecas, selNoites].forEach(sel => sel.innerHTML = PERIODOS.map(p => `<option value="${p.v}">${p.txt}</option>`).join(''));
+  const selTurmas = document.getElementById('hallFiltroTurmas');
+  [selPecas, selNoites, selTurmas].forEach(sel => { if(sel) sel.innerHTML = PERIODOS.map(p => `<option value="${p.v}">${p.txt}</option>`).join(''); });
   selPecas.addEventListener('change', () => { filtroPecas = selPecas.value; desenharTopPecas(); });
   selNoites.addEventListener('change', () => { filtroNoites = selNoites.value; desenharTopNoites(); });
+  if(selTurmas) selTurmas.addEventListener('change', () => { filtroTurmas = selTurmas.value; desenharTurmas(); });
   document.getElementById('hallCompara').addEventListener('change', ev => { comparaCom = ev.target.value; desenharComparacao(); });
   let compA = null, compB = null;
   document.getElementById('hallCompA').addEventListener('change', ev => { compA = Number(ev.target.value); desenharCompEdicoes(); });
@@ -1518,7 +2218,7 @@ async function paginaHall(){
     const lista = stats.pecas.filter(p => p.st && dentroDoPeriodo(p.ano, filtroPecas));
     let elig = lista.filter(p => p.st.n >= minAv);
     if(!elig.length) elig = lista;
-    const top = [...elig].sort((a,b) => b.st.avg - a.st.avg || b.st.n - a.st.n).slice(0, 10);
+    const top = [...elig].sort((a,b) => b.st.avg - a.st.avg || b.st.n - a.st.n).slice(0, CNT.topPecas);
     desenhar('chartTopPecas', {
       type: 'bar',
       data: {
@@ -1537,7 +2237,7 @@ async function paginaHall(){
   function desenharTopNoites(){
     if(!stats) return;
     const lista = stats.noites.filter(x => dentroDoPeriodo(x.ano, filtroNoites));
-    const top = [...lista].sort((a,b) => b.avg - a.avg).slice(0, 10);
+    const top = [...lista].sort((a,b) => b.avg - a.avg).slice(0, CNT.topNoites);
     desenhar('chartTopNoites', {
       type: 'bar',
       data: { labels: top.map(x => `Noite ${x.noite} · ${x.ano}`), datasets: [{ data: top.map(x => Number(x.avg.toFixed(2))), backgroundColor: top.map(x => corDaNota(x.avg)) }] },
@@ -1548,6 +2248,37 @@ async function paginaHall(){
         scales: { x: { min: 0, max: NOTA_MAXIMA } }
       }
     });
+  }
+
+  /* média histórica por turma (respeita o mesmo filtro de período) */
+  function desenharTurmas(){
+    if(!stats) return;
+    const el = document.getElementById('recTurmas');
+    if(!el) return;
+    const acc = {};
+    stats.pecas.forEach(p => {
+      if(!p.turma || !p.st || !p.st.n) return;
+      if(!dentroDoPeriodo(p.ano, filtroTurmas)) return;
+      const t = acc[p.turma] || (acc[p.turma] = { soma: 0, n: 0, anos: new Set(), pecas: 0 });
+      t.soma += p.st.avg * p.st.n;  // média ponderada pelo nº de avaliações
+      t.n += p.st.n;
+      t.anos.add(p.ano);
+      t.pecas++;
+    });
+    const lista = Object.keys(acc)
+      .map(t => ({ turma: t, avg: acc[t].soma / acc[t].n, n: acc[t].n, anos: acc[t].anos.size, pecas: acc[t].pecas }))
+      .filter(x => x.n >= minAv)
+      .sort((a,b) => b.avg - a.avg);
+    el.innerHTML = lista.length
+      ? lista.map((x, i) => `<div class="record-item">
+          <span class="rec-emoji">${['🥇','🥈','🥉'][i] || (i+1) + 'º'}</span>
+          <div style="flex:1 1 auto; min-width:0">
+            <div class="rec-title">Turma ${esc(x.turma)}</div>
+            <div class="rec-text">${x.pecas} peça${x.pecas === 1 ? '' : 's'} · ${x.anos} ediç${x.anos === 1 ? 'ão' : 'ões'} · ${x.n} avaliaç${x.n === 1 ? 'ão' : 'ões'}</div>
+          </div>
+          <span class="busca-nota" style="background:${corDaNota(x.avg)}">${x.avg.toFixed(2)}</span>
+        </div>`).join('')
+      : '<div class="empty-note">Ainda não há avaliações suficientes.</div>';
   }
 
   function desenharComparacao(){
@@ -1705,6 +2436,7 @@ async function paginaHall(){
     /* ---- gráficos ---- */
     desenharTopPecas();
     desenharTopNoites();
+    desenharTurmas();
 
     const rankAnos = [...s.anos].sort((a,b) => b.avg - a.avg);
     desenhar('chartTopFestivais', {
@@ -1924,9 +2656,55 @@ async function paginaHall(){
       }));
       stats = calcular(votos);
       renderTudo();
+      renderUsuarios(votos);
       const st = document.getElementById('hallAtualizado');
       if(st) st.textContent = '· atualizado às ' + new Date().toLocaleTimeString('pt-BR');
     }catch(e){ console.error('Hall: falha na atualização', e); }
+  }
+
+  /* ---- ranking de usuários (perfis mais ativos) ---- */
+  async function renderUsuarios(votos){
+    const box = document.getElementById('rankUsuarios');
+    if(!box) return;
+    const anos = Object.keys(votos).map(Number);
+    const U = {};
+    anos.forEach(y => (votos[y] || []).forEach(s => {
+      const u = String(s.user || '').trim(); if(!u) return;
+      const key = u.toLowerCase();
+      const rec = U[key] || (U[key] = { nome: u, eps: 0, anos: new Set(), notas: [] });
+      Object.values(s.grid).forEach(v => { const x = Number(v); if(!isNaN(x)){ rec.eps++; rec.notas.push(x); } });
+      rec.anos.add(y);
+    }));
+    const lista = Object.keys(U).map(k => {
+      const r = U[k];
+      const ys = [...r.anos].sort((a,b) => a - b);
+      let streak = ys.length ? 1 : 0, best = streak;
+      for(let i = 1; i < ys.length; i++){ if(ys[i] === ys[i-1] + 1){ streak++; best = Math.max(best, streak); } else streak = 1; }
+      return { nome: r.nome, eps: r.eps, festivais: r.anos.size, streak: best, media: media(r.notas) };
+    });
+
+    /* bolões vencidos (1º lugar por menor erro médio) */
+    const palAnos = await Promise.all(anos.map(async y => ({ y, pal: await fetchPalpites(y) })));
+    const wins = {};
+    palAnos.forEach(o => {
+      if(!o.pal.length) return;
+      const acc = {}; (votos[o.y] || []).forEach(s => Object.keys(s.grid).forEach(k => { const v = Number(s.grid[k]); if(!isNaN(v)) (acc[k] = acc[k] || []).push(v); }));
+      const real = {}; Object.keys(acc).forEach(k => real[k] = media(acc[k]));
+      const rank = o.pal.map(p => { let so = 0, n = 0; Object.keys(p.palpites || {}).forEach(k => { if(real[k] !== undefined){ so += Math.abs(Number(p.palpites[k]) - real[k]); n++; } }); return { user: String(p.user), err: n ? so / n : Infinity, n }; }).filter(r => r.n > 0).sort((a,b) => a.err - b.err);
+      if(rank.length){ const w = rank[0].user.toLowerCase(); wins[w] = (wins[w] || 0) + 1; }
+    });
+    const winList = Object.keys(wins).map(k => ({ nome: (U[k] && U[k].nome) || k, wins: wins[k] }));
+
+    const link = nome => `${BASE}perfil.html?user=${encodeURIComponent(nome)}`;
+    const col = (titulo, itens, fmt) => `<div class="rank-col"><h3 class="subhead">${titulo}</h3>${itens.length
+      ? `<div class="record-list">${itens.map((x,i) => `<a class="record-item" href="${link(x.nome)}"><span class="rec-emoji">${['🥇','🥈','🥉'][i] || (i+1) + 'º'}</span><div><div class="rec-title">${esc(x.nome)}</div><div class="rec-text">${fmt(x)}</div></div></a>`).join('')}</div>`
+      : '<div class="empty-note">Ainda sem dados.</div>'}</div>`;
+
+    box.innerHTML =
+      col('🎬 Top avaliadores', [...lista].sort((a,b) => b.eps - a.eps).slice(0, CNT.rankUsuarios), x => `${x.eps} peça${x.eps === 1 ? '' : 's'} avaliada${x.eps === 1 ? '' : 's'}`) +
+      col('🏛️ Marcando presença', [...lista].sort((a,b) => b.festivais - a.festivais || b.eps - a.eps).slice(0, CNT.rankUsuarios), x => `${x.festivais} festiva${x.festivais === 1 ? 'l' : 'is'}`) +
+      col('🔥 Streak de festivais', [...lista].filter(x => x.streak >= 2).sort((a,b) => b.streak - a.streak || b.festivais - a.festivais).slice(0, CNT.rankUsuarios), x => `${x.streak} edições seguidas`) +
+      col('🔮 Gosta do jogo', winList.sort((a,b) => b.wins - a.wins).slice(0, CNT.rankUsuarios), x => `${x.wins} bolão${x.wins === 1 ? '' : 'es'} vencido${x.wins === 1 ? '' : 's'}`);
   }
 
   await atualizar();
@@ -1939,7 +2717,7 @@ async function paginaHall(){
    ===================================================================== */
 async function paginaHome(){
   document.title = 'CETECritic';
-  const slogan = (typeof SLOGAN_HOME !== 'undefined') ? SLOGAN_HOME : 'O agregador de notas do CETEC Festival.';
+  const slogan = (typeof SLOGAN_HOME !== 'undefined') ? SLOGAN_HOME : 'O Cetec Festival na palma da sua mão';
   const pastaDest = `${EDICAO_EM_DESTAQUE}/`;
 
   /* countdown grandão: começo da edição → fim da votação → próxima edição */
@@ -1982,9 +2760,11 @@ async function paginaHome(){
     if(i > 0 && ano - anosTl[i-1] > 1)
       htmlTl += `<div class="tl-item gap"><div class="tl-year"></div><div class="tl-line"><div class="tl-dot"></div></div><div class="tl-text tl-sub">···</div></div>`;
     const cfgE = EDICOES.find(e => e.ano === ano);
-    const futura = cfgE && cfgE.abreEm && new Date(cfgE.abreEm) > agora();
-    const nome = cfgE ? `<a href="${BASE}${ano}/index.html">Cetec Festival ${ano}</a>` : '';
-    const nota = notasTl[ano] ? esc(notasTl[ano]) : (futura ? 'Em produção...' : '');
+    const emBreve = cfgE && cfgE.emBreve;
+    const futura = cfgE && ((cfgE.abreEm && new Date(cfgE.abreEm) > agora()) || emBreve);
+    const destino = emBreve ? `${BASE}em-breve.html?ano=${ano}` : `${BASE}${ano}/index.html`;
+    const nome = cfgE ? `<a href="${destino}">Cetec Festival ${ano}</a>` : '';
+    const nota = notasTl[ano] ? esc(notasTl[ano]) : (emBreve ? 'Em breve...' : (futura ? 'Em produção...' : ''));
     htmlTl += `<div class="tl-item">
       <div class="tl-year">${ano}</div>
       <div class="tl-line"><div class="tl-dot"></div></div>
@@ -2033,7 +2813,7 @@ async function paginaHome(){
 
     <div class="section">
       <h2>💡 Curiosidades</h2>
-      <div class="sub">Descubra mais sobre o maior festival de teatro estudantil do Rio GRande do Sul.</div>
+      <div class="sub">Descubra mais sobre o maior festival de teatro estudantil do Rio Grande do Sul.</div>
       <div class="record-list" id="homeCurio"><div class="empty-note">Carregando...</div></div>
     </div>
 
@@ -2170,16 +2950,961 @@ async function paginaHome(){
       ...((HD.curiosidades || []).map(c => typeof c === 'string' ? { texto: c } : c)),
       ...autoCurio.map(t => ({ texto: t }))
     ];
+    /* mostra só 5 por vez, sorteadas — troca a cada ciclo (20s), igual ao hall */
     const elC = document.getElementById('homeCurio');
-    if(elC) elC.innerHTML = curios.length
-      ? curios.map(c => {
+    if(elC){
+      if(curios.length){
+        const POR_VEZ = 5;
+        const escolhidas = curios.length <= POR_VEZ
+          ? curios
+          : [...curios].sort(() => Math.random() - 0.5).slice(0, POR_VEZ);
+        elC.classList.remove('curio-fade');
+        void elC.offsetWidth; /* reinicia a animação de fade */
+        elC.classList.add('curio-fade');
+        elC.innerHTML = escolhidas.map(c => {
           const inner = `<span class="rec-emoji">${c.emoji || '💡'}</span><div><div class="rec-text" style="color:var(--text); font-size:13px;">${esc(c.texto)}</div></div>`;
           return c.url ? `<a class="record-item" href="${c.url}">${inner}</a>` : `<div class="record-item">${inner}</div>`;
-        }).join('')
-      : '<div class="empty-note">Adicione curiosidades no home-dados.js.</div>';
+        }).join('');
+      } else {
+        elC.innerHTML = '<div class="empty-note">Adicione curiosidades no home-dados.js.</div>';
+      }
+    }
   }
   atualizarHome();
   setInterval(atualizarHome, 20000);
+}
+
+/* =====================================================================
+   PÁGINA: EM BREVE (compartilhada — em-breve.html?ano=XXXX)
+   Serve a qualquer edição marcada com emBreve:true no config.js, SEM
+   precisar de pasta própria. O ano vem pela URL (PAGINA.ano).
+   ===================================================================== */
+function paginaEmBreve(){
+  const titulo = ANO ? `Cetec Festival ${ANO}` : 'CETEC Festival';
+  document.title = `${titulo} — Em breve`;
+  montarShell(`
+    <div id="capture-area">
+      <div class="left-panel">
+        <div class="poster-box question-mark"><span>?</span></div>
+        <div class="title-section"><h1>${esc(titulo)}</h1><div class="description">-</div></div>
+      </div>
+      <div class="grid-blur-wrap">
+        <div class="grid-panel">${gridVazioHtml()}</div>
+        <div class="grid-blur-overlay">${htmlEmBreveBox('Esta edição ainda está sendo reunida')}</div>
+      </div>
+    </div>`);
+}
+
+/* =====================================================================
+   PÁGINA: PERFIL (perfil.html) — avaliações, badges e bolão do usuário
+   ===================================================================== */
+function htmlItemSimples(r){
+  const inner = `<span class="rec-emoji">${r.emoji || '🏅'}</span><div><div class="rec-title">${esc(r.titulo)}</div>${r.texto ? `<div class="rec-text">${esc(r.texto)}</div>` : ''}</div>`;
+  return r.url ? `<a class="record-item" href="${r.url}">${inner}</a>` : `<div class="record-item">${inner}</div>`;
+}
+
+/* card de badge (bloqueada = apagada/cinza) */
+function badgeCardHtml(b){
+  return `<div class="badge-card${b.unlocked ? '' : ' locked'}" title="${esc(b.titulo)}${b.texto ? ' — ' + esc(b.texto) : ''}">
+    <div class="badge-emoji">${b.emoji}</div>
+    <div class="badge-name">${esc(b.titulo)}</div>
+    <div class="badge-desc">${esc(b.texto || '')}</div>
+    ${b.cat ? `<div class="badge-cat">${esc(b.cat)}</div>` : ''}
+  </div>`;
+}
+
+/* grade de notas de UMA avaliação, para expandir no perfil */
+function perfilMiniGridHtml(grid, ano){
+  const noites = (EDICOES.find(e => e.ano === ano) || { noites: 5 }).noites;
+  let maxE = 1;
+  Object.keys(grid).forEach(k => { const m = k.match(/^s\d+e(\d+)$/); if(m) maxE = Math.max(maxE, Number(m[1])); });
+  let h = `<div class="grid-row"><div class="cell label"></div>`;
+  for(let s = 1; s <= noites; s++) h += `<div class="cell header">S${s}</div>`;
+  h += `</div>`;
+  for(let e = 1; e <= maxE; e++){
+    h += `<div class="grid-row"><div class="cell label">E${e}</div>`;
+    for(let s = 1; s <= noites; s++){
+      const v = grid[`s${s}e${e}`];
+      h += v !== undefined
+        ? `<div class="cell" style="background:${corDaNota(v)}; color:#14161a">${Number(v).toFixed(1)}</div>`
+        : `<div class="cell empty-cell">–</div>`;
+    }
+    h += `</div>`;
+  }
+  return h;
+}
+
+/* catálogo de badges completo. Recebe um contexto já calculado (ctx). */
+function catalogoBadges(ctx){
+  const cat = [];
+  /* dinâmicas: Veterano de cada edição real (bloqueada até participar) */
+  ctx.reais.map(e => e.ano).sort((a,b) => b - a).forEach(ano => {
+    cat.push({ emoji: '🎖️', titulo: `Veterano de ${ano}`, texto: `Avaliar peças da edição ${ano}`, unlocked: ctx.anosSet.has(ano), cat: 'Presença' });
+  });
+  const S = (emoji, titulo, texto, cond, categoria) => cat.push({ emoji, titulo, texto, unlocked: !!cond, cat: categoria });
+  /* Histórico e Presença */
+  S('🎬','Primeira Curtain Call','Fazer login e enviar a sua primeira review', ctx.total >= 1, 'Presença');
+  S('🏺','Arqueólogo do Passado','Avaliar peças de festivais anteriores a 2020', ctx.pre2020, 'Presença');
+  S('🌱','Plateia Raiz',`Marcar presença em ${metaPerfil('plateiaRaiz',4)}+ edições diferentes`, ctx.nAnos >= metaPerfil('plateiaRaiz',4), 'Presença');
+  S('🌙','Maratona Noturna','Avaliar em todas as noites de uma mesma edição', ctx.maratonaNoturna, 'Presença');
+  S('📜','Historiador',`Avaliar peça de ${metaPerfil('historiador',5)} edições diferentes`, ctx.nAnos >= metaPerfil('historiador',5), 'Presença');
+  S('🔥','Sequência','Avaliar duas edições de anos seguidos', ctx.consecutivo, 'Presença');
+  /* Bolão e Precisão */
+  S('🔮','O Oráculo','Acertar a média exata de uma peça no bolão (erro < 0.05)', ctx.oraculo, 'Bolão');
+  S('🔵','Bola de Cristal','Ficar no Top 3 do bolão de uma edição', ctx.bolaCristal, 'Bolão');
+  S('👁️','Visionário','Ser o melhor palpiteiro de um episódio no bolão', ctx.visionario, 'Bolão');
+  S('🧮','Cálculo Exato','Erro médio < 0.1 na Noite Ouro do bolão', ctx.calculoExato, 'Bolão');
+  S('🎰','Aposta de Risco','Cravar nota extrema (≤2 ou ≥9) com erro < 0.5', ctx.apostaRisco, 'Bolão');
+  S('🗳️','Palpiteiro','Entrar em algum bolão', ctx.participouBolao >= 1, 'Bolão');
+  /* Comportamento de Crítico */
+  S('🏅','Selo Purista','Dar 10 a uma peça recordista (média ≥ 9)', ctx.selopurista, 'Crítico');
+  S('🥀','Dedo Podre','Dar a nota mais baixa e discrepante de uma peça', ctx.dedoPodre, 'Crítico');
+  S('💗','Coração mole','Ter média das suas notas acima de 9.0', ctx.coracaoMole, 'Crítico');
+  S('⚔️','Juiz Severo','Manter suas notas bem abaixo da média da plateia', ctx.juizSevero, 'Crítico');
+  S('🌀','Caos em Pessoa','Dar nota extrema numa peça polêmica (muito dividida)', ctx.caos, 'Crítico');
+  S('🌈','Paladar variado','Usar 7 valores de nota diferentes', ctx.diversidade >= 7, 'Crítico');
+  /* Interação Comunitária */
+  S('👯','Gêmeo de Opinião','+90% de afinidade de notas com outro usuário', ctx.gemeo, 'Comunidade');
+  S('🦄','Gosto Peculiar','Amar (nota 8+) peças que a plateia rejeitou (média < 6)', ctx.gostoPeculiar, 'Comunidade');
+  S('📺','Espectador em Série',`Avaliar ${metaPerfil('espectadorSerie',10)}+ peças no total`, ctx.nNotas >= metaPerfil('espectadorSerie',10), 'Comunidade');
+  S('🧾','Metralhadora de notas',`Dar ${metaPerfil('metralhadora',100)} notas no total`, ctx.nNotas >= metaPerfil('metralhadora',100), 'Comunidade');
+  S('👑','Lenda do Fórum','Nível alto e presença em todas as edições com votos', ctx.lenda, 'Comunidade');
+  /* Especiais / Sazonais */
+  S('🥇','Noite de Ouro','Avaliar a noite de maior média de uma edição', ctx.noiteOuroAv, 'Especial');
+  S('🎭','Polêmico','Dar nota máxima e mínima na mesma noite', ctx.polemicoNoite, 'Especial');
+  S('✨','Revelação','Dar 9+ a uma peça que terminou com média < 7', ctx.revelacao, 'Especial');
+  S('🌃','Coruja','Avaliar de madrugada (0h–5h)', ctx.madrugada, 'Especial');
+  S('🏆','Ficha completa','Avaliar uma edição inteira (todos os episódios)', ctx.fichaCompleta, 'Especial');
+  S('📸','Mestre dos Bastidores','Enviar foto de uma apresentação (em breve)', false, 'Especial');
+  /* Colecionador depende de quantas já foram desbloqueadas */
+  const desbloq = cat.filter(b => b.unlocked).length;
+  cat.push({ emoji: '🧷', titulo: 'Colecionador', texto: `Ter ${metaPerfil('colecionador',15)}+ badges diferentes`, unlocked: desbloq >= metaPerfil('colecionador',15), cat: 'Comunidade' });
+  return cat;
+}
+
+/* card de avaliação (expansível) para o perfil */
+function reviewCardHtml(s){
+  const vals = Object.values(s.grid).map(Number).filter(v => !isNaN(v));
+  const avg = media(vals);
+  const chips = Object.keys(s.grid).sort().map(k =>
+    `<div class="mini-chip" style="background:${corDaNota(s.grid[k])}" title="${esc(k.toUpperCase())}: ${Number(s.grid[k]).toFixed(1)}"></div>`).join('');
+  return `<div class="submission-item">
+    <div class="submission-head">
+      <div class="submission-avg" style="background:${corDaNota(avg)}">${avg === null ? '–' : avg.toFixed(1)}</div>
+      <div class="submission-meta">
+        <div class="submission-name">Cetec Festival ${s.ano}</div>
+        <div class="submission-when">${tempoAtras(Number(s.ts))} · ${vals.length} episódio${vals.length === 1 ? '' : 's'} avaliado${vals.length === 1 ? '' : 's'}</div>
+      </div>
+      <div class="submission-mini">${chips}</div>
+      <div class="chevron">▾</div>
+    </div>
+    <div class="submission-detail"><div class="submission-detail-inner">
+      <div class="grid-panel mini-grid">${perfilMiniGridHtml(s.grid, s.ano)}</div>
+    </div></div>
+  </div>`;
+}
+function ligarExpansao(container){
+  container.querySelectorAll('.submission-item').forEach(item => {
+    const head = item.querySelector('.submission-head');
+    if(head) head.addEventListener('click', () => {
+      const aberto = item.classList.contains('expanded');
+      container.querySelectorAll('.submission-item.expanded').forEach(el => { if(el !== item) el.classList.remove('expanded'); });
+      item.classList.toggle('expanded', !aberto);
+    });
+  });
+}
+
+async function paginaPerfil(){
+  const meuSess = usuarioLogado();
+  const alvoUser = (PAGINA.perfilUser || (meuSess && meuSess.user) || '').trim();
+  const ehMeu = !!(meuSess && alvoUser && alvoUser.toLowerCase() === meuSess.user.toLowerCase());
+  document.title = ehMeu ? 'Meu perfil — CETECritic' : `${alvoUser || 'Perfil'} — CETECritic`;
+
+  if(!alvoUser){
+    montarShell(`
+      <div class="perfil-head"><h1>Meu perfil</h1></div>
+      <div class="noite-card" style="text-align:center;">
+        <div class="perfil-vazio">Você ainda não entrou. Crie uma conta para guardar suas avaliações, ganhar badges, entrar no bolão e interagir com outros perfis.</div>
+        <button class="btn btn-solid" id="perfilEntrar">Entrar / Criar conta</button>
+      </div>`);
+    const b = document.getElementById('perfilEntrar');
+    if(b) b.addEventListener('click', () => { const e = document.getElementById('btnEntrar'); if(e) e.click(); });
+    return;
+  }
+
+  const alvo = alvoUser.toLowerCase();
+  montarShell(`
+    <div class="perfil-head">
+      <div class="perfil-avatar" id="perfilAvatar">${esc(alvoUser.slice(0,1).toUpperCase())}</div>
+      <div class="perfil-head-info">
+        <h1>${esc(alvoUser)} <span class="nivel-chip" id="nivelChip"></span> <span class="titulo-chip" id="tituloChip" style="display:none;"></span></h1>
+        <div class="perfil-sub" id="perfilSub">Carregando...</div>
+        <div class="nivel-bar-wrap"><div class="nivel-bar" id="nivelBar"></div></div>
+        <div class="nivel-txt" id="nivelTxt"></div>
+      </div>
+      <div class="perfil-actions" id="perfilActions"></div>
+    </div>
+    <div id="perfilShowcase"></div>
+    <div class="section" id="favSection">
+      <h2>❤️ Edições preferidas <button class="btn btn-ghost btn-mini" id="btnEditarFavs" style="display:none;">Editar</button></h2>
+      <div id="favBox"><div class="empty-note">Carregando...</div></div>
+    </div>
+    <div class="hall-cards" id="perfilStats"></div>
+    <div class="section" id="compareSection" style="display:none;"><h2>🔗 Comparação</h2><div id="compareBox"></div></div>
+    <div class="section">
+      <h2>🏅 Badges <span class="badge-count" id="badgeCount"></span></h2>
+      <div class="sub">Mostramos 3 de cada vez — trocam a cada reload. As bloqueadas ficam apagadas.</div>
+      <div class="badge-grid" id="badgePreview"><div class="empty-note">Carregando...</div></div>
+      <button class="btn btn-ghost" id="badgeToggle" style="display:none; margin-top:12px;">Ver todas</button>
+      <div class="badge-grid" id="badgeAll" style="display:none; margin-top:12px;"></div>
+    </div>
+    <div class="section"><h2>🔮 Bolão</h2>
+      <div class="sub">Palpites por episódio e como se saiu (o placar aparece depois que a votação daquele ano fecha).</div>
+      <div class="record-list" id="perfilBolao"><div class="empty-note">Carregando...</div></div></div>
+    <div class="section">
+      <h2>🏷️ Carimbos <button class="ajuda-btn" id="carimboAjuda" title="O que são os carimbos?">?</button></h2>
+      <div class="carimbo-legenda" id="carimboLegenda" style="display:none;"></div>
+      <div id="carimbosBox"><div class="empty-note">Carregando...</div></div>
+    </div>
+    <div class="section" id="amigosSection"><h2>👥 Amigos <span class="badge-count" id="amigosCount"></span></h2>
+      <div id="amigosBox"><div class="empty-note">Carregando...</div></div>
+      <div id="amigosAdd"></div></div>
+    <div class="section"><h2>👀 Visitantes <span class="badge-count" id="visitasCount"></span></h2>
+      <div id="visitantesBox"><div class="empty-note">Carregando...</div></div></div>
+    <div class="section"><h2>📝 Avaliações</h2>
+      <div class="rev-tabs">
+        <button class="rev-tab active" id="tabFest">Por festival</button>
+        <button class="rev-tab" id="tabRec">Recentes</button>
+      </div>
+      <div id="revPorFestival"><div class="empty-note">Carregando...</div></div>
+      <div id="revRecentes" style="display:none;"></div>
+    </div>`);
+
+  /* ações do topo do perfil */
+  const actEl = document.getElementById('perfilActions');
+  if(actEl && !ehMeu && meuSess){
+    /* perfil de outra pessoa, logado: reputação + adicionar amigo + compare */
+    actEl.innerHTML = `
+      <div class="rep-control" title="Reputação">
+        <button class="rep-btn rep-up" id="repUp" title="Dar +1 de reputação">▲</button>
+        <span class="rep-count" id="repCount">–</span>
+        <button class="rep-btn rep-down" id="repDown" title="Dar -1 de reputação">▼</button>
+      </div>
+      <button class="btn btn-ghost" id="btnAddFriend">➕ Amigo</button>
+      <button class="btn btn-solid" id="btnCompare">🔗 Compare</button>`;
+  } else if(actEl && ehMeu){
+    actEl.innerHTML = `<button class="btn btn-ghost" id="btnEditarShowcase">✏️ Editar destaques</button>`;
+  }
+
+  /* ---- reputação (karma): estado + UI ---- */
+  let repTotal = null, repMeu = 0;
+  function atualizarRepUI(){
+    const c = document.getElementById('repCount');
+    if(c) c.textContent = (repTotal === null ? '–' : repTotal);
+    const up = document.getElementById('repUp'), dn = document.getElementById('repDown');
+    if(up) up.classList.toggle('ativo', repMeu === 1);
+    if(dn) dn.classList.toggle('ativo', repMeu === -1);
+    const tc = document.getElementById('tituloChip');
+    if(tc){
+      const rep = (repTotal === null ? 0 : repTotal);
+      const { atual, prox } = tituloPorReputacao(rep);
+      if(atual){
+        tc.style.display = '';
+        tc.textContent = `${atual.emoji} ${atual.nome}`;
+        tc.title = `Reputação ${rep}` + (prox ? ` · faltam ${Number(prox.min) - rep} 👍 para "${prox.nome}"` : ' · título máximo! 🎉');
+      }
+    }
+  }
+  async function votarRep(valor){
+    const up = document.getElementById('repUp'), dn = document.getElementById('repDown');
+    if(up) up.disabled = true; if(dn) dn.disabled = true;
+    const novo = (repMeu === valor) ? 0 : valor;   // clicar de novo no mesmo tira o voto
+    const r = await apiVotarReputacao(alvoUser, novo);
+    if(up) up.disabled = false; if(dn) dn.disabled = false;
+    if(r && r.ok){
+      repMeu = (typeof r.meu === 'number') ? r.meu : novo;
+      if(typeof r.total === 'number') repTotal = r.total;
+      atualizarRepUI();
+    } else {
+      const c = document.getElementById('repCount');
+      if(c) c.title = (r && r.error) ? r.error : 'não foi possível votar';
+    }
+  }
+  { const up = document.getElementById('repUp'), dn = document.getElementById('repDown');
+    if(up) up.addEventListener('click', () => votarRep(1));
+    if(dn) dn.addEventListener('click', () => votarRep(-1)); }
+
+  /* ---- adicionar amigo a partir do perfil de outra pessoa ---- */
+  const btnAdd = document.getElementById('btnAddFriend');
+  if(btnAdd){
+    /* estado inicial: checa se já é meu amigo */
+    fetchPerfilPublico(meuSess.user).then(meuPub => {
+      const amigos = (meuPub && meuPub.perfil && Array.isArray(meuPub.perfil.amigos)) ? meuPub.perfil.amigos : [];
+      if(amigos.some(x => String(x).toLowerCase() === alvoUser.toLowerCase())){
+        btnAdd.textContent = '✓ Amigo'; btnAdd.disabled = true;
+      }
+    });
+    btnAdd.addEventListener('click', async () => {
+      btnAdd.disabled = true; btnAdd.textContent = 'Adicionando...';
+      const meuPub = await fetchPerfilPublico(meuSess.user) || {};
+      const meuCfg = (meuPub.perfil && typeof meuPub.perfil === 'object') ? meuPub.perfil : {};
+      const amigos = Array.isArray(meuCfg.amigos) ? meuCfg.amigos.slice() : [];
+      if(amigos.some(x => String(x).toLowerCase() === alvoUser.toLowerCase())){
+        btnAdd.textContent = '✓ Amigo'; return;
+      }
+      amigos.push(alvoUser);
+      const r = await apiSalvarPerfil(Object.assign({}, meuCfg, { amigos }));
+      if(r && r.ok){ btnAdd.textContent = '✓ Amigo'; }
+      else { btnAdd.disabled = false; btnAdd.textContent = '➕ Amigo'; }
+    });
+  }
+
+  /* legenda dos carimbos (o "?") */
+  const legendaEl = document.getElementById('carimboLegenda');
+  if(legendaEl) legendaEl.innerHTML = Object.keys(CARIMBOS).map(t =>
+    `<div class="carimbo-leg-item"><span>${CARIMBOS[t].emoji}</span><div><b>${esc(CARIMBOS[t].nome)}</b> — ${esc(CARIMBOS[t].desc)}</div></div>`).join('');
+  const ajudaBtn = document.getElementById('carimboAjuda');
+  if(ajudaBtn) ajudaBtn.addEventListener('click', () => {
+    legendaEl.style.display = legendaEl.style.display === 'none' ? 'block' : 'none';
+  });
+
+  const reais = EDICOES.filter(e => !e.emBreve);
+  let previewTitulos = null;
+  let visitaRegistrada = false;
+
+  async function carregar(){
+    const porAno = await Promise.all(reais.map(async e => {
+      try{
+        const r = await fetch(API_URL + '?year=' + e.ano + '&_=' + Date.now(), { cache:'no-store' });
+        const j = await r.json();
+        return { ano: e.ano, subs: filtrarVotosDoAno(Array.isArray(j) ? j : (j.submissions || []), e.ano) };
+      }catch(err){ return { ano: e.ano, subs: [] }; }
+    }));
+
+    /* dataset global + avaliações do dono do perfil + do visitante (p/ compare) */
+    const todosSubs = [];
+    const alvoSubs = [];
+    const minhasSubs = [];
+    const meuLower = meuSess ? meuSess.user.trim().toLowerCase() : null;
+    porAno.forEach(o => o.subs.forEach(s => {
+      const u = String(s.user || '').trim().toLowerCase();
+      const reg = { grid: s.grid, year: o.ano, user: s.user, ts: s.ts };
+      todosSubs.push(reg);
+      if(u === alvo) alvoSubs.push({ ...reg, ano: o.ano });
+      if(meuLower && u === meuLower) minhasSubs.push({ ...reg, ano: o.ano });
+    }));
+
+    const todasNotas = [];
+    alvoSubs.forEach(s => Object.values(s.grid).forEach(v => { const x = Number(v); if(!isNaN(x)) todasNotas.push(x); }));
+    const anosPart = [...new Set(alvoSubs.map(s => s.ano))].sort((a,b) => b - a);
+    const mediaDada = media(todasNotas);
+    const nivel = nivelInfo(todasNotas.length);
+
+    /* header + nível */
+    const chip = document.getElementById('nivelChip'); if(chip) chip.textContent = `Nível ${nivel.nivel}`;
+    const nbar = document.getElementById('nivelBar'); if(nbar) nbar.style.width = nivel.pct + '%';
+    const ntxt = document.getElementById('nivelTxt'); if(ntxt) ntxt.textContent = `${nivel.xp} XP · faltam ${nivel.faltamXp} XP para o nível ${nivel.nivel + 1} (cada episódio avaliado = ${XP_POR_EPISODIO} XP)`;
+    const subEl = document.getElementById('perfilSub');
+    if(subEl) subEl.textContent = alvoSubs.length
+      ? `${alvoSubs.length} avaliaç${alvoSubs.length === 1 ? 'ão' : 'ões'} · ${anosPart.length} ediç${anosPart.length === 1 ? 'ão' : 'ões'} · membro desde ${new Date(Math.min(...alvoSubs.map(s => Number(s.ts)))).toLocaleDateString('pt-BR')}`
+      : (ehMeu ? 'Você ainda não enviou nenhuma avaliação logado. Vá a uma edição e avalie!' : 'Ainda não tem avaliações públicas.');
+
+    /* ---- cartões de estatística ---- */
+    const cards = [
+      { big: String(alvoSubs.length), lbl: 'Avaliações' },
+      { big: String(todasNotas.length), lbl: 'Notas dadas' },
+      { big: mediaDada === null ? '–' : mediaDada.toFixed(1), lbl: 'Nota média' },
+      { big: String(anosPart.length), lbl: 'Edições vistas' }
+    ];
+    const stEl = document.getElementById('perfilStats');
+    if(stEl) stEl.innerHTML = cards.map(c => `<div class="hall-card"><div class="big">${c.big}</div><div class="lbl">${c.lbl}</div></div>`).join('');
+
+    /* lista de usuários conhecidos (dos votos) — usada no "adicionar amigo" */
+    carregar._usuarios = [...new Set(todosSubs.map(s => String(s.user || '').trim()).filter(Boolean))];
+
+    /* ---- perfil público: showcase, favoritas, amigos, reputação, visitas, carimbos ---- */
+    const pub = await fetchPerfilPublico(alvoUser, meuSess ? meuSess.user : null) || {};
+    const perfilCfg = (pub.perfil && typeof pub.perfil === 'object') ? pub.perfil : {};
+    carregar._perfilCfg = perfilCfg;
+    carregar._showcase = perfilCfg.showcase || {};
+    renderShowcase(carregar._showcase);
+    renderFavs(perfilCfg.edicoesFav || []);
+    renderAmigos(perfilCfg.amigos || []);
+    montarAmigosAdd();
+    renderCarimbos(pub.carimbos || []);
+    renderVisitantes(pub.visitas || [], pub.totalVisitas || 0);
+
+    /* reputação (karma) + título */
+    if(typeof pub.reputacao === 'number') repTotal = pub.reputacao; else if(repTotal === null) repTotal = 0;
+    if(typeof pub.meuVoto === 'number') repMeu = pub.meuVoto;
+    atualizarRepUI();
+
+    /* registra a visita (1x) quando estou vendo o perfil de outra pessoa */
+    if(!ehMeu && meuSess && !visitaRegistrada){ visitaRegistrada = true; apiRegistrarVisita(alvoUser); }
+
+    /* ---- estatísticas por episódio / edição (para badges) ---- */
+    const epStats = {};
+    { const acc = {}; todosSubs.forEach(s => Object.keys(s.grid).forEach(k => { const v = Number(s.grid[k]); if(isNaN(v)) return; const id = s.year + '|' + k; (acc[id] = acc[id] || []).push(v); }));
+      Object.keys(acc).forEach(id => epStats[id] = statsDeVals(acc[id])); }
+    const noiteOuro = {};
+    { const nb = {}; todosSubs.forEach(s => Object.keys(s.grid).forEach(k => { const m = k.match(/^s(\d+)e\d+$/); if(!m) return; const v = Number(s.grid[k]); if(isNaN(v)) return; ((nb[s.year] = nb[s.year] || {})[m[1]] = nb[s.year][m[1]] || []).push(v); }));
+      Object.keys(nb).forEach(y => { let best = null, ba = -1; Object.keys(nb[y]).forEach(nt => { const a = media(nb[y][nt]); if(a > ba){ ba = a; best = Number(nt); } }); noiteOuro[y] = best; }); }
+    const globalNotas = []; todosSubs.forEach(s => Object.values(s.grid).forEach(v => { const x = Number(v); if(!isNaN(x)) globalNotas.push(x); }));
+    const globalAvg = media(globalNotas);
+
+    /* ---- bolão por episódio ---- */
+    const palpitesPorAno = await Promise.all(porAno.map(async o => ({ ano: o.ano, subs: o.subs, pal: await fetchPalpites(o.ano) })));
+    const bolaoRes = [];
+    let oraculo = false, apostaRisco = false, calculoExato = false, visionario = false;
+    palpitesPorAno.forEach(o => {
+      if(!o.pal.length) return;
+      const realPorKey = {};
+      for(const id in epStats){ if(id.indexOf(o.ano + '|') === 0) realPorKey[id.split('|')[1]] = epStats[id].avg; }
+      if(!Object.keys(realPorKey).length) return;
+      const rank = o.pal.map(p => {
+        let soma = 0, n = 0;
+        Object.keys(p.palpites || {}).forEach(k => { if(realPorKey[k] !== undefined){ soma += Math.abs(Number(p.palpites[k]) - realPorKey[k]); n++; } });
+        return { user: String(p.user), erroMedio: n ? soma / n : Infinity, n };
+      }).filter(r => r.n > 0).sort((a,b) => a.erroMedio - b.erroMedio);
+      const idx = rank.findIndex(r => r.user.trim().toLowerCase() === alvo);
+      if(idx >= 0) bolaoRes.push({ ano: o.ano, pos: idx + 1, total: rank.length, erroMedio: rank[idx].erroMedio, n: rank[idx].n });
+      /* sinais finos do dono do perfil */
+      const meuPal = o.pal.find(p => String(p.user).trim().toLowerCase() === alvo);
+      if(meuPal && meuPal.palpites){
+        const nOuro = noiteOuro[o.ano];
+        let somaO = 0, nO = 0;
+        Object.keys(meuPal.palpites).forEach(k => {
+          if(realPorKey[k] === undefined) return;
+          const pal = Number(meuPal.palpites[k]);
+          const err = Math.abs(pal - realPorKey[k]);
+          if(err < 0.05) oraculo = true;
+          if((pal <= 2 || pal >= 9) && err < 0.5) apostaRisco = true;
+          const m = k.match(/^s(\d+)e\d+$/);
+          if(m && Number(m[1]) === nOuro){ somaO += err; nO++; }
+          let melhor = Infinity; o.pal.forEach(p => { const pv = Number((p.palpites || {})[k]); if(!isNaN(pv)){ const er = Math.abs(pv - realPorKey[k]); if(er < melhor) melhor = er; } });
+          if(o.pal.length >= 3 && err <= melhor + 1e-9) visionario = true;
+        });
+        if(nO && somaO / nO < 0.1) calculoExato = true;
+      }
+    });
+    bolaoRes.sort((a,b) => b.ano - a.ano);
+    const bEl = document.getElementById('perfilBolao');
+    if(bEl) bEl.innerHTML = bolaoRes.length
+      ? bolaoRes.map(b => {
+          const medal = b.pos === 1 ? '🥇' : b.pos === 2 ? '🥈' : b.pos === 3 ? '🥉' : '🔮';
+          return htmlItemSimples({ emoji: medal, titulo: `Bolão ${b.ano} — ${b.pos}º de ${b.total}`,
+            texto: `Erro médio ${b.erroMedio.toFixed(2)} em ${b.n} episódio${b.n === 1 ? '' : 's'}` });
+        }).join('')
+      : '<div class="empty-note">Sem resultado de bolão ainda.</div>';
+
+    /* ---- sinais de comportamento (badges) ---- */
+    let maratonaNoturna = false, polemicoNoite = false, selopurista = false, revelacao = false, gostoPeculiar = 0, caos = false, dedoPodre = false, noiteOuroAv = false;
+    alvoSubs.forEach(s => {
+      const noites = (EDICOES.find(e => e.ano === s.ano) || { noites: 5 }).noites;
+      const nSet = new Set(); const porNoite = {};
+      Object.keys(s.grid).forEach(k => {
+        const v = Number(s.grid[k]); if(isNaN(v)) return;
+        const m = k.match(/^s(\d+)e\d+$/); if(m){ nSet.add(Number(m[1])); (porNoite[m[1]] = porNoite[m[1]] || []).push(v); }
+        const st = epStats[s.year + '|' + k];
+        if(st){
+          if(v >= NOTA_MAXIMA - 0.01 && st.avg >= 9) selopurista = true;
+          if(v >= 9 && st.avg < 7) revelacao = true;
+          if(v >= 8 && st.avg < 6) gostoPeculiar++;
+          if(st.std >= 2.5 && (v >= 9 || v <= 2)) caos = true;
+          if(st.n >= 3 && v <= st.min + 0.001 && (st.avg - v) >= 3) dedoPodre = true;
+        }
+        if(m && Number(m[1]) === noiteOuro[s.year]) noiteOuroAv = true;
+      });
+      let todas = noites > 0; for(let n = 1; n <= noites; n++) if(!nSet.has(n)) todas = false;
+      if(todas) maratonaNoturna = true;
+      Object.keys(porNoite).forEach(nt => { const arr = porNoite[nt]; if(Math.max(...arr) >= NOTA_MAXIMA - 0.01 && Math.min(...arr) <= 0.01) polemicoNoite = true; });
+    });
+
+    /* afinidade máxima com outro usuário (Gêmeo de Opinião) */
+    const porUser = {};
+    todosSubs.forEach(s => { const u = String(s.user || '').trim().toLowerCase(); if(!u || u === alvo) return; (porUser[u] = porUser[u] || []).push({ grid: s.grid, year: s.year }); });
+    let bestAfin = 0;
+    Object.keys(porUser).forEach(u => { const a = afinidadeGosto(alvoSubs, porUser[u]); if(a.pct !== null && a.shared >= 5 && a.pct > bestAfin) bestAfin = a.pct; });
+
+    const edicoesComVotos = porAno.filter(o => o.subs.length > 0).map(o => o.ano);
+    const ctx = {
+      reais, anosSet: new Set(anosPart), nAnos: anosPart.length, total: alvoSubs.length, nNotas: todasNotas.length,
+      pre2020: anosPart.some(a => a < 2020),
+      consecutivo: anosPart.some(a => anosPart.includes(a + 1)),
+      diversidade: new Set(todasNotas).size,
+      madrugada: alvoSubs.some(s => { const h = new Date(Number(s.ts)).getHours(); return h >= 0 && h < 5; }),
+      fichaCompleta: alvoSubs.some(s => { const noites = (EDICOES.find(e => e.ano === s.ano) || { noites: 5 }).noites; return Object.keys(s.grid).length >= noites * 3; }),
+      maratonaNoturna, polemicoNoite, selopurista, revelacao, caos, dedoPodre, noiteOuroAv,
+      gostoPeculiar: gostoPeculiar >= 2,
+      coracaoMole: (mediaDada !== null && todasNotas.length >= 10 && mediaDada > 9.0),
+      juizSevero: (globalAvg !== null && mediaDada !== null && todasNotas.length >= 10 && mediaDada < globalAvg - 1.5),
+      gemeo: bestAfin >= metaPerfil('gemeoAfinidade', 90),
+      oraculo, apostaRisco, calculoExato, visionario,
+      bolaCristal: bolaoRes.some(b => b.pos <= 3),
+      participouBolao: bolaoRes.length,
+      lenda: (nivel.nivel >= metaPerfil('lendaNivel', 5) && edicoesComVotos.length > 0 && edicoesComVotos.every(y => anosPart.includes(y)))
+    };
+    const cat = catalogoBadges(ctx);
+    const nUnlocked = cat.filter(b => b.unlocked).length;
+    /* preview: sorteia entre as DESBLOQUEADAS; só completa com bloqueadas se faltar */
+    if(previewTitulos === null){
+      const unl = cat.filter(b => b.unlocked).sort(() => Math.random() - 0.5);
+      const loc = cat.filter(b => !b.unlocked).sort(() => Math.random() - 0.5);
+      previewTitulos = [...unl, ...loc].slice(0, BADGES_PREVIEW).map(b => b.titulo);
+    }
+    const preview = previewTitulos.map(t => cat.find(b => b.titulo === t)).filter(Boolean);
+    const countEl = document.getElementById('badgeCount'); if(countEl) countEl.textContent = `${nUnlocked}/${cat.length}`;
+    const previewEl = document.getElementById('badgePreview'); if(previewEl) previewEl.innerHTML = preview.map(badgeCardHtml).join('');
+    const allEl = document.getElementById('badgeAll'); if(allEl) allEl.innerHTML = cat.map(badgeCardHtml).join('');
+    const toggle = document.getElementById('badgeToggle');
+    if(toggle){
+      toggle.style.display = '';
+      if(allEl.style.display === 'none') toggle.textContent = `Ver todas (${cat.length})`;
+      toggle.onclick = () => {
+        const aberto = allEl.style.display !== 'none';
+        allEl.style.display = aberto ? 'none' : 'grid';
+        previewEl.style.display = aberto ? 'grid' : 'none';
+        toggle.textContent = aberto ? `Ver todas (${cat.length})` : 'Ver menos';
+      };
+    }
+
+    /* ---- avaliações: por festival + recentes ---- */
+    const revFest = document.getElementById('revPorFestival');
+    const revRec = document.getElementById('revRecentes');
+    if(!alvoSubs.length){
+      if(revFest) revFest.innerHTML = '<div class="empty-note">Nenhuma avaliação ainda.</div>';
+      if(revRec) revRec.innerHTML = '<div class="empty-note">Nenhuma avaliação ainda.</div>';
+    } else {
+      if(revFest){
+        revFest.innerHTML = anosPart.map(ano => {
+          const desse = alvoSubs.filter(s => s.ano === ano).sort((a,b) => Number(b.ts) - Number(a.ts));
+          return `<div class="rev-fest-grupo"><div class="rev-fest-titulo">Cetec Festival ${ano} <span>(${desse.length})</span></div>
+            <div class="submission-list">${desse.map(reviewCardHtml).join('')}</div></div>`;
+        }).join('');
+        ligarExpansao(revFest);
+      }
+      if(revRec){
+        revRec.innerHTML = `<div class="submission-list">${[...alvoSubs].sort((a,b) => Number(b.ts) - Number(a.ts)).map(reviewCardHtml).join('')}</div>`;
+        ligarExpansao(revRec);
+      }
+    }
+
+    /* guarda para o compare / showcase */
+    carregar._alvoSubs = alvoSubs;
+    carregar._minhasSubs = minhasSubs;
+  }
+
+  /* ---- salvar perfil SEM apagar o resto ----
+     O perfil é UM objeto JSON só (showcase + edicoesFav + amigos). Salvar
+     precisa MESCLAR com o que já existe, senão salvar destaques apagaria os
+     amigos etc. Só usar no MEU perfil (carregar._perfilCfg = meu perfil). */
+  async function salvarPerfilMerge(patch){
+    const base = (carregar._perfilCfg && typeof carregar._perfilCfg === 'object') ? carregar._perfilCfg : {};
+    const novo = Object.assign({}, base, patch);
+    const r = await apiSalvarPerfil(novo);
+    if(r && r.ok) carregar._perfilCfg = novo;
+    return r;
+  }
+
+  /* ---- edições preferidas (estilo Letterboxd) ---- */
+  function renderFavs(anos){
+    const box = document.getElementById('favBox');
+    const btn = document.getElementById('btnEditarFavs');
+    if(btn) btn.style.display = ehMeu ? '' : 'none';
+    if(!box) return;
+    const arr = (Array.isArray(anos) ? anos : []).map(Number).filter(a => reais.some(e => e.ano === a));
+    if(!arr.length){
+      box.innerHTML = ehMeu
+        ? '<div class="empty-note">Escolha suas edições preferidas para exibir aqui (dá pra fixar mais de uma). Clique em "Editar".</div>'
+        : '<div class="empty-note">Nenhuma edição preferida ainda.</div>';
+      return;
+    }
+    box.innerHTML = `<div class="fav-grid">${arr.map(ano => {
+      const poster = `${BASE}${ano}/poster.jpg`;
+      return `<a class="fav-card" href="${BASE}${ano}/index.html" title="Cetec Festival ${ano}">
+        <div class="fav-poster" style="background-image:url('${esc(poster)}')"></div>
+        <div class="fav-ano">${ano}</div></a>`;
+    }).join('')}</div>`;
+  }
+  function abrirEditorFavs(){
+    const box = document.getElementById('favBox');
+    if(!box) return;
+    const max = PERFIL_CFG.maxEdicoesFav || 4;
+    let sel = ((carregar._perfilCfg && carregar._perfilCfg.edicoesFav) || []).map(Number).filter(a => reais.some(e => e.ano === a));
+    const desc = reais.slice().sort((a,b) => b.ano - a.ano);
+    function draw(){
+      box.innerHTML = `<div class="fav-editor">
+        <div class="fav-editor-hint">Escolha até ${max} — a ordem dos cliques é a ordem que aparece.</div>
+        <div class="fav-chip-wrap">${desc.map(e => {
+          const i = sel.indexOf(e.ano);
+          return `<button class="fav-chip${i >= 0 ? ' sel' : ''}" data-ano="${e.ano}">${e.ano}${i >= 0 ? ` <span>${i+1}</span>` : ''}</button>`;
+        }).join('')}</div>
+        <div class="showcase-form-actions"><span class="bolao-msg" id="favMsg"></span>
+          <button class="submit-btn" id="favSalvar">Salvar preferidas</button></div>
+      </div>`;
+      box.querySelectorAll('.fav-chip').forEach(b => b.addEventListener('click', () => {
+        const ano = Number(b.dataset.ano);
+        const i = sel.indexOf(ano);
+        if(i >= 0) sel.splice(i, 1);
+        else {
+          if(sel.length >= max){ const m = document.getElementById('favMsg'); if(m) m.textContent = `Máximo de ${max} edições.`; return; }
+          sel.push(ano);
+        }
+        draw();
+      }));
+      document.getElementById('favSalvar').addEventListener('click', async () => {
+        const bt = document.getElementById('favSalvar'), msg = document.getElementById('favMsg');
+        bt.disabled = true; bt.innerHTML = '<span class="spinner"></span>Salvando...';
+        const r = await salvarPerfilMerge({ edicoesFav: sel });
+        bt.disabled = false; bt.textContent = 'Salvar preferidas';
+        if(r && r.ok) renderFavs(sel);
+        else if(msg) msg.textContent = (r && r.error) ? r.error : 'Não foi possível salvar.';
+      });
+    }
+    draw();
+  }
+
+  /* ---- amigos ---- */
+  function renderAmigos(lista){
+    const arr = (Array.isArray(lista) ? lista : []).filter(Boolean);
+    const cnt = document.getElementById('amigosCount'); if(cnt) cnt.textContent = arr.length ? String(arr.length) : '';
+    const box = document.getElementById('amigosBox');
+    if(!box) return;
+    box.innerHTML = arr.length
+      ? `<div class="busca-users">${arr.map(u => `<span class="busca-user amigo-chip">
+          <a class="amigo-link" href="${BASE}perfil.html?user=${encodeURIComponent(u)}"><span class="busca-ava">${esc(String(u).slice(0,1).toUpperCase())}</span><span class="busca-user-nome">${esc(u)}</span></a>
+          ${ehMeu ? `<button class="amigo-rm" data-u="${esc(u)}" title="Remover amigo">×</button>` : ''}</span>`).join('')}</div>`
+      : `<div class="empty-note">${ehMeu ? 'Você ainda não adicionou amigos. Busque abaixo, ou use o botão "➕ Amigo" no perfil de alguém.' : 'Nenhum amigo ainda.'}</div>`;
+    if(ehMeu){
+      box.querySelectorAll('.amigo-rm').forEach(b => b.addEventListener('click', async () => {
+        const u = b.dataset.u;
+        const novo = ((carregar._perfilCfg && carregar._perfilCfg.amigos) || []).filter(x => String(x).toLowerCase() !== String(u).toLowerCase());
+        b.disabled = true;
+        const r = await salvarPerfilMerge({ amigos: novo });
+        if(r && r.ok) renderAmigos(novo); else b.disabled = false;
+      }));
+    }
+  }
+  function montarAmigosAdd(){
+    const add = document.getElementById('amigosAdd');
+    if(!add) return;
+    if(!ehMeu || !meuSess){ add.innerHTML = ''; return; }
+    if(document.getElementById('amigoQ')) return;   // já montado — não recria (não apaga o que a pessoa digita no refresh de 30s)
+    add.innerHTML = `<div class="amigo-add">
+      <input type="text" id="amigoQ" placeholder="Buscar usuário para adicionar…" autocomplete="off">
+      <div class="amigo-sugest" id="amigoSugest"></div></div>`;
+    const q = document.getElementById('amigoQ'), sug = document.getElementById('amigoSugest');
+    q.addEventListener('input', () => {
+      const t = q.value.trim().toLowerCase();
+      const meu = meuSess.user.toLowerCase();
+      const jaAmigo = new Set(((carregar._perfilCfg && carregar._perfilCfg.amigos) || []).map(x => String(x).toLowerCase()));
+      const lista = !t ? [] : (carregar._usuarios || [])
+        .filter(u => u.toLowerCase().includes(t) && u.toLowerCase() !== meu && !jaAmigo.has(u.toLowerCase()))
+        .slice(0, 8);
+      sug.innerHTML = lista.map(u => `<button class="amigo-sug-item" data-u="${esc(u)}"><span class="busca-ava">${esc(u.slice(0,1).toUpperCase())}</span>${esc(u)}</button>`).join('');
+      sug.querySelectorAll('.amigo-sug-item').forEach(b => b.addEventListener('click', async () => {
+        const u = b.dataset.u;
+        const novo = [ ...((carregar._perfilCfg && carregar._perfilCfg.amigos) || []), u ];
+        b.disabled = true;
+        const r = await salvarPerfilMerge({ amigos: novo });
+        if(r && r.ok){ q.value = ''; sug.innerHTML = ''; renderAmigos(novo); }
+        else b.disabled = false;
+      }));
+    });
+  }
+
+  /* ---- showcase (destaques do perfil) ----
+     As opções vêm SEMPRE dos dados reais do site (peças/noites/edições/
+     playlists cadastradas) — o usuário só escolhe, não digita nada solto. */
+  function renderShowcase(sc){
+    const el = document.getElementById('perfilShowcase');
+    if(!el) return;
+    const itens = [];
+    if(sc.pecaFav) itens.push({ i:'🎭', l:'Peça favorita', v: sc.pecaFav });
+    if(sc.anoFav) itens.push({ i:'📅', l:'Edição favorita', v: `Cetec Festival ${sc.anoFav}` });
+    if(sc.noiteFav) itens.push({ i:'🌙', l:'Noite favorita', v: sc.noiteFav });
+    if(sc.playlist && sc.playlist.url) itens.push({ i:'🎵', l:'Playlist de abertura', v: `Cetec Festival ${sc.playlist.ano}`, url: sc.playlist.url });
+    if(!itens.length && !ehMeu){ el.innerHTML = ''; return; }
+    el.innerHTML = itens.length
+      ? `<div class="showcase-grid">${itens.map(x => {
+          const inner = `<div class="sc-ico">${x.i}</div><div><div class="sc-lbl">${x.l}</div><div class="sc-val">${esc(String(x.v))}</div></div>`;
+          return x.url ? `<a class="showcase-card" href="${esc(x.url)}" target="_blank" rel="noopener">${inner}</a>` : `<div class="showcase-card">${inner}</div>`;
+        }).join('')}</div>`
+      : (ehMeu ? '<div class="empty-note">Você ainda não escolheu destaques. Clique em "Editar destaques" no topo.</div>' : '');
+  }
+
+  /* varre edicao.js + noites/*.js de todas as edições reais para montar as
+     opções (peças, noites, playlists cadastradas) — igual ao Hall faz */
+  let opcoesShowcaseCache = null;
+  async function carregarOpcoesShowcase(){
+    if(opcoesShowcaseCache) return opcoesShowcaseCache;
+    const pecas = [], noites = [], playlists = [];
+    for(const cfg of reais){
+      try{
+        const textos = await Promise.all([
+          fetch(`${BASE}${cfg.ano}/edicao.js`).then(r => r.text()),
+          ...Array.from({ length: cfg.noites }, (_, i) => fetch(`${BASE}${cfg.ano}/noites/noite-${i+1}.js`).then(r => r.text()))
+        ]);
+        const d = new Function(textos.join('\n') + '\n;return { EDICAO, NOITES };')();
+        if(d.EDICAO && d.EDICAO.abertura && d.EDICAO.abertura.spotify) playlists.push({ ano: cfg.ano, url: d.EDICAO.abertura.spotify });
+        for(let n = 1; n <= cfg.noites; n++){
+          noites.push({ label: `Noite ${n} de ${cfg.ano}` });
+          const nd = d.NOITES && d.NOITES[n];
+          if(nd && Array.isArray(nd.pecas)) nd.pecas.forEach(p => pecas.push({ label: `${p.titulo} — Turma ${p.turma} (${cfg.ano})` }));
+        }
+      }catch(e){ /* edição sem arquivos ainda: só não entra nas opções */ }
+    }
+    opcoesShowcaseCache = { pecas, noites, playlists };
+    return opcoesShowcaseCache;
+  }
+
+  async function abrirEditorShowcase(){
+    const atual = (carregar._showcase) || {};
+    const el = document.getElementById('perfilShowcase');
+    el.innerHTML = '<div class="empty-note">Carregando opções...</div>';
+    const opts = await carregarOpcoesShowcase();
+    const opt = (v, sel) => `<option value="${esc(v)}"${sel ? ' selected' : ''}>${esc(v)}</option>`;
+    el.innerHTML = `<div class="showcase-form">
+      <div class="sf-row"><label>🎭 Peça favorita</label>
+        <select id="scPeca"><option value="">—</option>${opts.pecas.map(p => opt(p.label, atual.pecaFav === p.label)).join('') || '<option disabled>Nenhuma peça cadastrada ainda</option>'}</select></div>
+      <div class="sf-row"><label>📅 Edição favorita</label>
+        <select id="scAno"><option value="">—</option>${reais.map(e => `<option value="${e.ano}"${String(atual.anoFav) === String(e.ano) ? ' selected' : ''}>Cetec Festival ${e.ano}</option>`).join('')}</select></div>
+      <div class="sf-row"><label>🌙 Noite favorita</label>
+        <select id="scNoite"><option value="">—</option>${opts.noites.map(n => opt(n.label, atual.noiteFav === n.label)).join('')}</select></div>
+      <div class="sf-row"><label>🎵 Playlist de abertura</label>
+        <select id="scPlaylist"><option value="">—</option>${opts.playlists.map(p => `<option value="${p.ano}"${atual.playlist && String(atual.playlist.ano) === String(p.ano) ? ' selected' : ''}>Cetec Festival ${p.ano}</option>`).join('') || '<option disabled>Nenhuma playlist cadastrada ainda</option>'}</select></div>
+      <div class="showcase-form-actions"><span class="bolao-msg" id="scMsg"></span><button class="submit-btn" id="scSalvar">Salvar destaques</button></div>
+    </div>`;
+    document.getElementById('scSalvar').addEventListener('click', async () => {
+      const playlistAno = document.getElementById('scPlaylist').value;
+      const playlistObj = playlistAno ? opts.playlists.find(p => String(p.ano) === playlistAno) : null;
+      const sc = {
+        pecaFav: document.getElementById('scPeca').value,
+        anoFav: document.getElementById('scAno').value,
+        noiteFav: document.getElementById('scNoite').value,
+        playlist: playlistObj ? { ano: playlistObj.ano, url: playlistObj.url } : null
+      };
+      const bt = document.getElementById('scSalvar'); const msg = document.getElementById('scMsg');
+      bt.disabled = true; bt.innerHTML = '<span class="spinner"></span>Salvando...';
+      const r = await salvarPerfilMerge({ showcase: sc });
+      bt.disabled = false; bt.textContent = 'Salvar destaques';
+      if(r && r.ok){ carregar._showcase = sc; renderShowcase(sc); }
+      else { msg.textContent = (r && r.error) ? r.error : 'Não foi possível salvar.'; }
+    });
+  }
+
+  /* ---- carimbos ---- */
+  function renderCarimbos(lista){
+    const box = document.getElementById('carimbosBox');
+    if(!box) return;
+    const cont = {};
+    lista.forEach(c => { cont[c.tipo] = (cont[c.tipo] || 0) + 1; });
+    const recebidos = Object.keys(cont).length
+      ? `<div class="carimbo-recebidos">${Object.keys(cont).map(t => {
+          const c = CARIMBOS[t] || { emoji:'🏷️', nome:t };
+          return `<div class="carimbo-chip" title="${esc(c.nome)}">${c.emoji} <span>${cont[t]}</span></div>`;
+        }).join('')}</div>`
+      : `<div class="empty-note">${ehMeu ? 'Ninguém te carimbou ainda.' : 'Sem carimbos ainda.'}</div>`;
+    let dar = '';
+    if(!ehMeu && meuSess){
+      dar = `<div class="carimbo-dar"><div class="carimbo-dar-lbl">Deixe um carimbo:</div>
+        <div class="carimbo-opcoes">${Object.keys(CARIMBOS).map(t =>
+          `<button class="carimbo-btn" data-tipo="${t}" title="${esc(CARIMBOS[t].nome)} — ${esc(CARIMBOS[t].desc)}">${CARIMBOS[t].emoji}</button>`).join('')}</div>
+        <div class="bolao-msg" id="carimboMsg"></div></div>`;
+    }
+    box.innerHTML = recebidos + dar;
+    if(!ehMeu && meuSess){
+      box.querySelectorAll('.carimbo-btn').forEach(btn => btn.addEventListener('click', async () => {
+        const tipo = btn.dataset.tipo; const msg = document.getElementById('carimboMsg');
+        box.querySelectorAll('.carimbo-btn').forEach(b => b.disabled = true);
+        const r = await apiCarimbar(alvoUser, tipo);
+        box.querySelectorAll('.carimbo-btn').forEach(b => b.disabled = false);
+        if(r && r.ok){ msg.textContent = 'Carimbo enviado! ✓'; const pub = await fetchPerfilPublico(alvoUser); renderCarimbos((pub && pub.carimbos) || []); }
+        else { msg.textContent = (r && r.error) ? r.error : 'Não foi possível carimbar.'; }
+      }));
+    }
+  }
+
+  /* ---- visitantes ---- */
+  function renderVisitantes(lista, total){
+    const cnt = document.getElementById('visitasCount'); if(cnt) cnt.textContent = `${total} visita${total === 1 ? '' : 's'}`;
+    const box = document.getElementById('visitantesBox');
+    if(!box) return;
+    if(!lista.length){ box.innerHTML = '<div class="empty-note">Nenhuma visita ainda.</div>'; return; }
+    const recentes = [...lista].sort((a,b) => Number(b.ts) - Number(a.ts)).slice(0, 12);
+    box.innerHTML = `<div class="visit-list">${recentes.map(v =>
+      `<a class="visit-chip" href="${BASE}perfil.html?user=${encodeURIComponent(v.visitor)}"><span class="visit-ava">${esc(String(v.visitor).slice(0,1).toUpperCase())}</span>${esc(v.visitor)} <span class="visit-when">${tempoAtras(Number(v.ts))}</span></a>`).join('')}</div>`;
+  }
+
+  /* botão editar destaques (meu perfil) */
+  const btnEditar = document.getElementById('btnEditarShowcase');
+  if(btnEditar) btnEditar.addEventListener('click', abrirEditorShowcase);
+
+  /* botão editar edições preferidas (meu perfil) */
+  const btnEditarFavs = document.getElementById('btnEditarFavs');
+  if(btnEditarFavs) btnEditarFavs.addEventListener('click', abrirEditorFavs);
+
+  /* botão compare (perfil de outra pessoa) */
+  const btnCompare = document.getElementById('btnCompare');
+  if(btnCompare) btnCompare.addEventListener('click', () => {
+    const sec = document.getElementById('compareSection');
+    const box = document.getElementById('compareBox');
+    const meus = carregar._minhasSubs || [];
+    const deles = carregar._alvoSubs || [];
+    const af = afinidadeGosto(meus, deles);
+    sec.style.display = '';
+    if(af.pct === null){
+      box.innerHTML = '<div class="empty-note">Vocês ainda não avaliaram nenhuma peça em comum.</div>';
+    } else {
+      /* concordância / discordância nas peças em comum */
+      const mapa = lista => { const m = {}; lista.forEach(s => Object.keys(s.grid).forEach(k => { const v = Number(s.grid[k]); if(!isNaN(v)) m[s.year + '|' + k] = v; })); return m; };
+      const A = mapa(meus), B = mapa(deles);
+      const comuns = Object.keys(A).filter(k => B[k] !== undefined).map(k => ({ k, a: A[k], b: B[k], dif: Math.abs(A[k] - B[k]) }));
+      const iguais = comuns.filter(c => c.dif <= 0.5).length;
+      const linha = c => { const [y, key] = c.k.split('|'); return `<div class="record-item"><span class="rec-emoji">${c.dif <= 0.5 ? '🤝' : '⚡'}</span><div><div class="rec-title">${y} · ${key.toUpperCase()}</div><div class="rec-text">você ${c.a.toFixed(1)} · ${esc(alvoUser)} ${c.b.toFixed(1)} (dif ${c.dif.toFixed(1)})</div></div></div>`; };
+      const maiores = [...comuns].sort((x,y) => y.dif - x.dif).slice(0, 4);
+      box.innerHTML = `<div class="afinidade-wrap">
+          <div class="afinidade-num">${af.pct.toFixed(0)}%</div>
+          <div class="afinidade-txt">de afinidade de gosto com <b>${esc(alvoUser)}</b><br>${af.shared} peça${af.shared === 1 ? '' : 's'} em comum · vocês deram nota parecida em ${iguais}</div>
+        </div>
+        <h3 class="subhead">Onde vocês mais divergem</h3>
+        <div class="record-list">${maiores.map(linha).join('')}</div>`;
+    }
+    sec.scrollIntoView({ behavior:'smooth', block:'nearest' });
+  });
+
+  /* abas de reviews */
+  const tabF = document.getElementById('tabFest'), tabR = document.getElementById('tabRec');
+  if(tabF && tabR){
+    tabF.addEventListener('click', () => { tabF.classList.add('active'); tabR.classList.remove('active'); document.getElementById('revPorFestival').style.display = ''; document.getElementById('revRecentes').style.display = 'none'; });
+    tabR.addEventListener('click', () => { tabR.classList.add('active'); tabF.classList.remove('active'); document.getElementById('revRecentes').style.display = ''; document.getElementById('revPorFestival').style.display = 'none'; });
+  }
+
+  carregar();
+  setInterval(carregar, 30000);
+}
+
+/* =====================================================================
+   PÁGINA: BUSCAR (busca.html) — peças, festivais e usuários com filtros
+   ===================================================================== */
+async function paginaBusca(){
+  document.title = 'CETECritic - Buscar';
+  montarShell(`
+    <div class="noite-intro">
+      <h1>🔎 Buscar</h1>
+      <p>Ache peças, festivais e usuários do acervo. Filtre por nota, ano, noite e turma.</p>
+    </div>
+    <div class="busca-barra"><input type="text" id="buscaQ" placeholder="Peça, tema, turma, festival ou usuário…" autocomplete="off"></div>
+    <div class="busca-filtros">
+      <label>Nota mínima <select class="hall-select" id="fNota"></select></label>
+      <label>Ano <select class="hall-select" id="fAno"></select></label>
+      <label>Noite <select class="hall-select" id="fNoite"></select></label>
+      <label>Turma <select class="hall-select" id="fTurma"></select></label>
+    </div>
+    <div id="buscaResultados"><div class="empty-note">Carregando o acervo…</div></div>`);
+
+  const reais = EDICOES.filter(e => !e.emBreve);
+
+  /* carrega as peças/festivais de todas as edições (edicao.js + noites/*.js) */
+  const pecas = [], festivais = [];
+  for(const cfg of reais){
+    try{
+      const textos = await Promise.all([
+        fetch(`${BASE}${cfg.ano}/edicao.js`).then(r => r.text()),
+        ...Array.from({ length: cfg.noites }, (_, i) => fetch(`${BASE}${cfg.ano}/noites/noite-${i+1}.js`).then(r => r.text()))
+      ]);
+      const d = new Function(textos.join('\n') + '\n;return { EDICAO, NOITES };')();
+      const ed = d.EDICAO || {};
+      const poster = `${BASE}${cfg.ano}/${ed.poster || 'poster.jpg'}`;
+      const tema = (ed.sobre && ed.sobre.titulo) || '';   // a "mostra"/tema da edição
+      /* texto pesquisável do festival: nome + tema + descrição + texto do sobre */
+      const buscaFest = [ed.titulo, tema, ed.descricao, ed.sobre && ed.sobre.texto].filter(Boolean).join(' ').toLowerCase();
+      festivais.push({ ano: cfg.ano, titulo: ed.titulo || `Cetec Festival ${cfg.ano}`, tema, poster, url: `${BASE}${cfg.ano}/index.html`, busca: buscaFest });
+      for(let n = 1; n <= cfg.noites; n++){
+        const nd = d.NOITES && d.NOITES[n];
+        if(nd && Array.isArray(nd.pecas)) nd.pecas.forEach((p, i) => {
+          const sinopse = p.sinopse || '';
+          /* texto pesquisável da peça: título + turma + sinopse (o "tema" da peça) */
+          const buscaPeca = [p.titulo, p.turma, sinopse].filter(Boolean).join(' ').toLowerCase();
+          pecas.push({ ano: cfg.ano, noite: n, key: `s${n}e${i+1}`, titulo: p.titulo || '', turma: p.turma || '', sinopse, poster, url: `${BASE}${cfg.ano}/noite-${n}.html`, busca: buscaPeca });
+        });
+      }
+    }catch(e){ /* edição sem arquivos ainda: fica de fora */ }
+  }
+
+  /* votos → média por peça, média por festival, e lista de usuários */
+  const votosPorAno = await Promise.all(reais.map(async e => {
+    try{ const r = await fetch(API_URL + '?year=' + e.ano + '&_=' + Date.now(), { cache:'no-store' }); const j = await r.json(); return { ano: e.ano, subs: filtrarVotosDoAno(Array.isArray(j) ? j : (j.submissions || []), e.ano) }; }
+    catch(x){ return { ano: e.ano, subs: [] }; }
+  }));
+  const avgKey = {}, avgFest = {}, usersMap = {};
+  votosPorAno.forEach(o => {
+    const accKey = {}, accFest = [];
+    o.subs.forEach(s => {
+      const u = String(s.user || '').trim();
+      if(u && !usersMap[u.toLowerCase()]) usersMap[u.toLowerCase()] = { nome: u, eps: 0 };
+      Object.keys(s.grid).forEach(k => {
+        const v = Number(s.grid[k]); if(isNaN(v)) return;
+        (accKey[k] = accKey[k] || []).push(v); accFest.push(v);
+        if(u) usersMap[u.toLowerCase()].eps++;
+      });
+    });
+    Object.keys(accKey).forEach(k => avgKey[o.ano + '|' + k] = { avg: media(accKey[k]), n: accKey[k].length });
+    avgFest[o.ano] = media(accFest);
+  });
+  pecas.forEach(p => { const a = avgKey[p.ano + '|' + p.key]; p.avg = a ? a.avg : null; p.nAval = a ? a.n : 0; });
+  festivais.forEach(f => { f.avg = (avgFest[f.ano] !== undefined) ? avgFest[f.ano] : null; });
+  const usuarios = Object.values(usersMap);
+  const turmas = [...new Set(pecas.map(p => p.turma).filter(Boolean))].sort();
+  const maxNoites = Math.max(...reais.map(e => e.noites), 1);
+
+  const selNota = document.getElementById('fNota'); selNota.innerHTML = `<option value="">qualquer</option>` + [9,8,7,6,5].map(n => `<option value="${n}">${n}+</option>`).join('');
+  const selAno = document.getElementById('fAno'); selAno.innerHTML = `<option value="">todos</option>` + reais.map(e => `<option value="${e.ano}">${e.ano}</option>`).join('');
+  const selNoite = document.getElementById('fNoite'); selNoite.innerHTML = `<option value="">todas</option>` + Array.from({ length: maxNoites }, (_, i) => `<option value="${i+1}">Noite ${i+1}</option>`).join('');
+  const selTurma = document.getElementById('fTurma'); selTurma.innerHTML = `<option value="">todas</option>` + turmas.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
+
+  const notaBadge = v => (v === null || v === undefined) ? '' : `<span class="busca-nota" style="background:${corDaNota(v)}">${v.toFixed(1)}</span>`;
+  const itemCard = (poster, titulo, meta, url, avg) => `<a class="busca-item" href="${url}">
+    <div class="busca-poster" style="background-image:url('${esc(poster)}')"></div>
+    <div class="busca-info"><div class="busca-titulo">${esc(titulo)} ${notaBadge(avg)}</div><div class="busca-meta">${esc(meta)}</div></div>
+  </a>`;
+
+  function render(){
+    const q = document.getElementById('buscaQ').value.trim().toLowerCase();
+    const notaMin = Number(selNota.value) || 0;
+    const ano = selAno.value, noite = selNoite.value, turma = selTurma.value;
+
+    const uMatch = q ? usuarios.filter(u => u.nome.toLowerCase().includes(q)).sort((a,b) => b.eps - a.eps).slice(0, 30) : [];
+    const pMatch = pecas.filter(p => {
+      if(ano && String(p.ano) !== ano) return false;
+      if(noite && String(p.noite) !== noite) return false;
+      if(turma && p.turma !== turma) return false;
+      if(notaMin && !(p.avg !== null && p.avg >= notaMin)) return false;
+      if(q && !p.busca.includes(q)) return false;
+      return true;
+    }).sort((a,b) => (b.avg || 0) - (a.avg || 0));
+    const fMatch = (noite || turma) ? [] : festivais.filter(f => {
+      if(ano && String(f.ano) !== ano) return false;
+      if(notaMin && !(f.avg !== null && f.avg >= notaMin)) return false;
+      if(q && !(f.busca.includes(q) || String(f.ano).includes(q))) return false;
+      return true;
+    }).sort((a,b) => b.ano - a.ano);
+
+    let html = '';
+    if(uMatch.length) html += `<div class="section"><h2>👤 Usuários <span class="badge-count">${uMatch.length}</span></h2>
+      <div class="busca-users">${uMatch.map(u => `<a class="busca-user" href="${BASE}perfil.html?user=${encodeURIComponent(u.nome)}"><span class="busca-ava">${esc(u.nome.slice(0,1).toUpperCase())}</span><span class="busca-user-nome">${esc(u.nome)}</span><span class="busca-user-sub">${u.eps} nota${u.eps === 1 ? '' : 's'}</span></a>`).join('')}</div></div>`;
+    if(fMatch.length) html += `<div class="section"><h2>🎪 Festivais <span class="badge-count">${fMatch.length}</span></h2>
+      <div class="busca-grid">${fMatch.map(f => itemCard(f.poster, f.titulo, f.tema ? `${f.tema} · ${f.ano}` : `Edição de ${f.ano}`, f.url, f.avg)).join('')}</div></div>`;
+    if(pMatch.length) html += `<div class="section"><h2>🎭 Peças <span class="badge-count">${pMatch.length}</span></h2>
+      <div class="busca-grid">${pMatch.slice(0, 150).map(p => itemCard(p.poster, p.titulo, `Turma ${p.turma} · ${p.ano} · Noite ${p.noite}${p.nAval ? ` · ${p.nAval} aval.` : ''}`, p.url, p.avg)).join('')}</div>
+      ${pMatch.length > 150 ? '<div class="empty-note">Mostrando as 150 primeiras — refine os filtros.</div>' : ''}</div>`;
+    if(!html) html = '<div class="empty-note">Nada encontrado com esses filtros. Tente afrouxar a busca.</div>';
+    document.getElementById('buscaResultados').innerHTML = html;
+  }
+
+  document.getElementById('buscaQ').addEventListener('input', render);
+  [selNota, selAno, selNoite, selTurma].forEach(s => s.addEventListener('change', render));
+  render();
 }
 
 /* ---------------------- dispatcher ---------------------- */
@@ -2191,5 +3916,8 @@ switch(PAGINA.tipo){
   case 'monte':    paginaMonte(); break;
   case 'hall':     paginaHall(); break;
   case 'home':     paginaHome(); break;
+  case 'emBreve':  paginaEmBreve(); break;
+  case 'perfil':   paginaPerfil(); break;
+  case 'busca':    paginaBusca(); break;
   default: console.error('PAGINA.tipo desconhecido:', PAGINA.tipo);
 }

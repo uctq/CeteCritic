@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Em breve — CETEC Festival</title>
+<link rel="icon" href="assets/favicon.png">
+<link rel="stylesheet" href="assets/estilo.css">
+</head>
+<body>
+<script>
+  /* Página compartilhada para edições marcadas com emBreve:true no config.js.
+     O ano vem pela URL (ex: em-breve.html?ano=2010). Não carrega nenhum
+     edicao.js, então não precisa de pasta própria para cada ano. */
+  const BASE = '';
+  const PAGINA = { tipo: 'emBreve', ano: Number(new URLSearchParams(location.search).get('ano')) || null };
+</script>
+<script src="config.js"></script>
+<script src="assets/core.js"></script>
+</body>
+</html>

@@ -26,7 +26,7 @@ const EDICAO = {
 
   sobre: {
     banner: 'sobre-banner.jpg',  /* banner no topo do card (opcional) */
-    titulo: '100 Abis da Semana da Arte Moderna',
+    titulo: '100 Anos da Semana da Arte Moderna',
     texto: 'A edição de 2022 do CETEC Festival adotou como fio condutor o centenário da Semana de Arte Moderna de 1922, explorando a ideia de ruptura e transformação cultural no Brasil. O evento utilizou as produções cênicas dos estudantes para resgatar o espírito dos intelectuais e artistas que buscaram afirmar uma identidade genuinamente nacional, plural e livre de amarras eurocêntricas. As peças teatrais desenvolvidas pelos alunos refletiram essa busca por uma poética própria, traduzindo questões de brasilidade, diversidade e linguagem para o palco do UCS Teatro. O projeto foi estruturado a partir de um processo pedagógico multidisciplinar que valorizou a pesquisa e o protagonismo jovem. Os estudantes atuaram em todas as frentes de produção, desde a concepção do argumento e elaboração dos roteiros até a gestão técnica e estética de figurinos, cenografia, sonoplastia e iluminação.'        /* vazio = página mostra countdown até o início da edição */
   },
 

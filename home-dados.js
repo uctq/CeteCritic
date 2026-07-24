@@ -13,6 +13,9 @@ const HOME_DADOS = {
   curiosidades: [
     // 'A primeira peça cadastrada no site é de 1995.',
     // { emoji: '🎪', texto: 'O Festival 2024 teve exatamente 18 apresentações.', url: '2024/index.html' },
+    { emoji: '🗓️', titulo: 'Cetec Festival Adiado', texto: 'O Cetec Festival de 2021 foi realizado em outubro, devido pandêmia de COVID-19 na época' },
+    { emoji: '📽️', titulo: 'Cetec Festival Transmitido', texto: 'Devido a pandêmia o Cetec Festival de 2020 foi o primeiro a ser transmitido ao vivo no Youtube e Facebook' },
+    { emoji: '📹', titulo: 'Cetec Festival Gravado', texto: 'O Cetec Festival de 2020 foi a primeira, e até o momentoa unica, edição onde as peças foram exibidas gravadas devido a pandemia' },
   ],
 
   /* ---- LINHA DO TEMPO ----
@@ -21,7 +24,8 @@ const HOME_DADOS = {
      pasta também podem estar aqui — viram só texto. Buracos entre anos
      aparecem como "···" automaticamente. */
   linhaDoTempo: {
-    1995: 'Primeiro CETEC Festival.',
+    1995: 'Inauguração do CETEC',
+    1997: 'Primeiro CETEC Festival.',
     2020: '25 Anos do Cetec - Primeiro Cetec Festival Realizado com Gravações',
     2021: 'O Jovem Desvendando o Mundo Pela Mitologia - Cetec Festival Realizado Mais Tarde Devido a Pandemia',
     2026: 'Veríssimos em Tempos de Fronteiras ao Vento — estreia do CETECritic.',
